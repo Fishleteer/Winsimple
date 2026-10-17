@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef WINSIMPLE_VIDEO_HPP
+#define WINSIMPLE_VIDEO_HPP
+
+
 #ifndef WINVER
 #define WINVER _WIN32_WINNT_WIN7
 #endif
@@ -46,16 +50,8 @@ namespace ws
 	class InitIMF
 	{
 		public:
-		InitIMF()
-		{
-			result = MFStartup(MF_VERSION);
-		}
-		~InitIMF()
-		{
-			if(SUCCEEDED(result))
-				MFShutdown();		
-		}
-		
+		InitIMF();
+		~InitIMF();		
 		HRESULT result;
 	}initIMF;
 
@@ -138,7 +134,17 @@ namespace ws
 		HWND m_hwndEvent;   // Window to receive WS_VIDEO_PLAYER_EVENT
 	};
 	
-	
+	#ifdef WINSIMPLE_VIDEO_IMPL
+
+	InitIMF::InitIMF()
+	{
+		result = MFStartup(MF_VERSION);
+	}
+	InitIMF::~InitIMF()
+	{
+		if(SUCCEEDED(result))
+			MFShutdown();		
+	}	
 
 	Video::Video()
 		: m_cRef(1)
@@ -644,4 +650,7 @@ namespace ws
 	{
 		Shutdown();
 	}
+	#endif
 }
+
+#endif

@@ -915,9 +915,9 @@ namespace ws
 		// Creates/re‑creates the GDI+ font object from the current family/style/size.
 		bool update();
 		std::string fontName = "Arial";
-	    Gdiplus::PrivateFontCollection* fontCollection;
-	    Gdiplus::Font* gdiFont;
-		Gdiplus::FontFamily* family;
+	    Gdiplus::PrivateFontCollection* fontCollection = nullptr;
+	    Gdiplus::Font* gdiFont = nullptr;
+		Gdiplus::FontFamily* family = nullptr;
 		int foundFamily = 0;
 		bool isCustomFont = false;
 		std::string fontFilePath;
@@ -3057,10 +3057,9 @@ namespace ws
 	}
 
 	Font::~Font() {
-		delete gdiFont;
-		delete family;
-		delete fontCollection;
-		ZeroMemory(this, sizeof(Font));
+		delete gdiFont;      gdiFont = nullptr;
+		delete family;       family = nullptr;
+		delete fontCollection; fontCollection = nullptr;
 	}
 
 	Gdiplus::Font* Font::getFontHandle() const {

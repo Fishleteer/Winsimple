@@ -344,6 +344,15 @@
 * Added SWP_NOACTIVATE to the setLayerAfter() method in ws::Window to avoid automatic activation.
 * Added setBehindIcons() to set window behind desktop icons. (only works on windows 11 for now)
 
+# V1.8
+* Winsimple Implementation is separated from the declaration. Define the following to use each header type.
+* WINSIMPLE_IMPL
+* WINSIMPLE_AUDIO_IMPL
+* WINSIMPLE_CONTROLS_IMPL
+* WINSIMPLE_ANIMATION_IMPL
+* WINSIMPLE_CLIPBOARD_IMPL
+* Added ws::Video with header winsimple-video.hpp. Use WINSIMPLE_VIDEO_IMPL
+
 
 
 
@@ -351,8 +360,6 @@
 
 
 * More Winapi Controls
-
-* Video class
 
 * Texture stretching into polygonal shapes.
 
