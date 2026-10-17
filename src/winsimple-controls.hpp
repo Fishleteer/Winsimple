@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <shellapi.h>
 
+#include <thread>
+
 //Controls Linking: -lcomctl32 -lcomdlg32
 
 //automated linking for visual studio MSVC
@@ -479,12 +481,12 @@ namespace ws
 		
 		std::string getResult() const;
 		
-		bool open(ws::Window* parent = nullptr);
+		bool open(ws::Window* parent = nullptr,std::string mode = "");
 	private:
 		std::string m_title, m_initialFolder, m_resultName;
 		DWORD options;
-		HRESULT hr;
-		IFileDialog* pfd = nullptr;
+		DWORD extraFlags = 0;
+		std::string m_mode = "open";
 	};
 
     class ListBox : public Child 
@@ -527,7 +529,7 @@ namespace ws
 		bool init(ws::Window& window, std::string title, HICON hIcon, DWORD styles = NIF_ICON | NIF_MESSAGE | NIF_TIP);
 		bool isPressed(int button);
 
-		bool showBalloon(const std::string& message, const std::string& title, DWORD infoFlags = NIIF_USER, int timeoutMs = 5000) const;
+		bool showBalloon(const std::string& message, const std::string& title,DWORD infoFlags = NIIF_USER, int timeoutMs = 5000) const;
 
 	private:
 		int myID = -1;
@@ -1608,7 +1610,7 @@ namespace ws
 		
 		for(size_t a=0;a<list.size();a++)
 		{
-			AppendMenu(hMenu, MF_STRING, 1+a, ws::WIDE(list[a]).c_str());
+			AppendMenu(hMenu, MF_STRING, 1+a, ws::toUTF16(list[a]).c_str());
 		}
 		
 		SetForegroundWindow(parentRef->hwnd);
@@ -1640,7 +1642,7 @@ namespace ws
 		, title("File Explorer")
 		, defaultFilter(1)
 		, fileName("") 
-		, szFile({ 0 }) {
+		, szFile{} {
 
 	}
 
@@ -1855,19 +1857,15 @@ namespace ws
 	}
 
 	ExploreWindow::ExploreWindow(std::string mode) {
-		CLSID clsid = (mode == "save") ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
-		hr = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd));
-
-		options = pfd->GetOptions(&options);
-
+		m_mode = mode;
 		addStyle(FOS_NOCHANGEDIR);
 	}
 
 	void ExploreWindow::addStyle(DWORD style) {
-		options |= style;
+		extraFlags |= style;
 	}
 	void ExploreWindow::removeStyle(DWORD style) {
-		options &= ~style;
+		extraFlags &= ~style;
 	}
 
 	void ExploreWindow::setTitle(std::string title) { m_title = title; }
@@ -1875,9 +1873,22 @@ namespace ws
 
 	std::string ExploreWindow::getResult() const { return m_resultName; }
 
-	bool ExploreWindow::open(ws::Window* parent) {
-
-		bool result = true;
+	bool ExploreWindow::open(ws::Window* parent,std::string mode) 
+	{
+		if(!mode.empty())
+			m_mode = mode;
+		
+		IFileDialog* pfd = nullptr;
+		CLSID clsid = (m_mode == "save") ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
+		HRESULT hr = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pfd));
+		
+		if(!SUCCEEDED(hr))
+			return false;
+		
+		options = pfd->GetOptions(&options);
+		options |= extraFlags;
+		
+		bool result = false;
 		if (SUCCEEDED(hr)) {
 			pfd->SetOptions(options);
 
@@ -1917,7 +1928,7 @@ namespace ws
 			}
 			pfd->Release();
 		}
-
+		
 		return result;
 	}
 

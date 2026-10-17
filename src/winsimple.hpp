@@ -45,8 +45,8 @@
 #include <memory>
 #include <vector>
 
-#ifndef SHORT
-typedef short SHORT;
+#ifndef toUTF8
+typedef short toUTF8;
 #endif
 #ifndef PROPID
 typedef unsigned long PROPID;
@@ -385,7 +385,7 @@ namespace ws
 	};
 	
 	
-	//@CDevJoud: renamed WIDE and SHORT
+	//@CDevJoud: renamed toUTF16 and toUTF8
 	
     // String conversion helpers
     // Converts a UTF-8 std::string to std::wstring, falling back to ACP on invalid chars.
@@ -395,7 +395,7 @@ namespace ws
 	std::string toUTF8(const std::wstring& wstr);
 
     /*inline LPCSTR TO_LPCSTR(const std::string& str) { return str.c_str(); }
-    inline LPCWSTR TO_LPCWSTR(const std::string& str) { return WIDE(str).c_str(); }*/
+    inline LPCWSTR TO_LPCWSTR(const std::string& str) { return toUTF16(str).c_str(); }*/
 
     // Internal helpers (used by Texture)
     // Returns the 8.3 short path name for the given long path.
@@ -1395,9 +1395,9 @@ namespace ws
 	public:
 		Icon() = default;
 		//constructor loads from file
-		Icon(std::string path);
+		Icon(std::string path,DWORD size = ICON_BIG);
 		//contructor loads from memory
-		Icon(const void* buffer, size_t bufferSize);
+		Icon(const void* buffer, size_t bufferSize,DWORD size = ICON_BIG);
 		//copy constructor that makes this icon the same as another icon - NOT A POINTER.
 		Icon(HICON icon);
 		~Icon();
@@ -1422,9 +1422,9 @@ namespace ws
 		HICON getHandle();
 		
 		//load the icon from an .ico file.
-		bool loadFromFile(std::string path);
+		bool loadFromFile(std::string path,DWORD size = ICON_BIG);
 		//load the icon from a block of memory.
-		bool loadFromMemory(const void* buffer, size_t bufferSize);
+		bool loadFromMemory(const void* buffer, size_t bufferSize,DWORD size = ICON_BIG);
 		
 		bool isValid();
 		
@@ -1463,8 +1463,8 @@ namespace ws
 		ws::View view;
 		std::vector<ws::Child*> children;
 		ws::Texture backBuffer;
-	    Gdiplus::Graphics* canvas;
-		HWND hwnd;
+	    Gdiplus::Graphics* canvas = nullptr;
+		HWND hwnd = nullptr;
 		
 		// Default constructor; creates an empty window.
 		Window();
@@ -1613,6 +1613,13 @@ namespace ws
 		
 		//overload that sets this window behind the icons.
 		bool setBehindIcons();
+		
+		private:
+		static bool setBehindIconsWinXP(HWND source);
+		static bool setBehindIconsWin7(HWND source);
+		static bool setBehindIconsWin8to10(HWND source);
+		static bool setBehindIconsWin11(HWND source);
+		public:
 		
 		// Converts screen coordinates to world.
 		ws::Vec2i toWorld(int x, int y);
@@ -2293,9 +2300,8 @@ namespace ws
 
 	//============VIEW==============
 
-	View::View() {
-		ZeroMemory(this, sizeof(View));
-	}
+	View::View() : rotation(0), port{}, world{}, portOrigin{0,0}, matrix(), zoom(0)
+	{}
 
 	// Custom copy constructor because Gdiplus::Matrix lacks a normal one.
 	View::View(const View& other) :
@@ -4563,12 +4569,12 @@ namespace ws
 		return true;
 	}
 	//ICON
-	Icon::Icon(std::string path) {
-		loadFromFile(path);
+	Icon::Icon(std::string path,DWORD size) {
+		loadFromFile(path,size);
 	}
 	//contructor loads from memory
-	Icon::Icon(const void* buffer, size_t bufferSize) {
-		loadFromMemory(buffer, bufferSize);
+	Icon::Icon(const void* buffer, size_t bufferSize,DWORD size) {
+		loadFromMemory(buffer, bufferSize,size);
 	}
 	//copy constructor that makes this icon the same as another icon - NOT A POINTER.
 	Icon::Icon(HICON icon) : hIcon(nullptr) {
@@ -4638,18 +4644,29 @@ namespace ws
 	}
 
 	//load the icon from an .ico file.
-	bool Icon::loadFromFile(std::string path) {
+	bool Icon::loadFromFile(std::string path,DWORD size) {
 		if (hIcon) {
 			DestroyIcon(hIcon);
 			hIcon = nullptr;
 		}
 
+		int pixels;
+		if (size == ICON_SMALL) {
+			pixels = GetSystemMetrics(SM_CXSMICON);
+		}
+		else if (size == ICON_BIG) {
+			pixels = GetSystemMetrics(SM_CXICON);
+		}
+		else
+			pixels = static_cast<int>(size);
+
+
 		hIcon = (HICON)LoadImageA(
 			NULL,
 			path.c_str(),
 			IMAGE_ICON,
-			0,
-			0,
+			pixels,
+			pixels,
 			LR_LOADFROMFILE | LR_SHARED
 		);
 		if (!hIcon)
@@ -4657,7 +4674,7 @@ namespace ws
 		return true;
 	}
 	//load the icon from a block of memory.
-	bool Icon::loadFromMemory(const void* buffer, size_t bufferSize) {
+	bool Icon::loadFromMemory(const void* buffer, size_t bufferSize,DWORD size) {
 		if (hIcon) {
 			DestroyIcon(hIcon);
 			hIcon = nullptr;
@@ -4705,7 +4722,7 @@ namespace ws
 	}
 
 	//get a texture copy of the icon at a specific size.
-	ws::Texture Icon::getTexture(int width, int height) {
+	ws::Texture Icon::getTexture(int width,int height) {
 		ws::Texture tex;
 		if (!tex.create(width, height))
 			return tex;
@@ -4716,7 +4733,7 @@ namespace ws
 			hdc,
 			0, 0,
 			hIcon,
-			width, height,
+			width,height,
 			0,
 			NULL,
 			DI_NORMAL
@@ -5386,49 +5403,282 @@ namespace ws
 		disableChromaKey();
 	}
 
-	//Sets the window behind the desktop icons. (WARNING -  this will override many window settings and styles to produce a functional desktop window.)
-	bool Window::setBehindIcons(HWND source) {
-		HWND progman = FindWindowW(L"Progman", nullptr);
-		HWND workerW = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+	bool Window::setBehindIconsWinXP(HWND source)
+	{
+		HWND progman = FindWindowW(L"Progman",nullptr);
+		if(!progman)
+		{
+			ws::log("WinXP path: Could not locate progman.");
+			return false;
+		}
+		
+		//switch the window into child mode
+		SetWindowLongA(source, GWL_STYLE, 0);
+		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+		
+		SetParent(source, progman);
+		
+		// Layered window for alpha blending.
+		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		exStyle |= WS_EX_LAYERED;
+		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
+
+		ShowWindow(source, SW_SHOW);		
+		
+		// Try to sit under the icons if we can find them.
 		HWND shellView = FindWindowExW(progman, nullptr, L"SHELLDLL_DefView", nullptr);
-		if (!progman || !workerW || !shellView) {
-			ws::log("Could not locate Progman / WorkerW / SHELLDLL_DefView. Failed to set Window behind icons!");
+		if(shellView)
+			SetWindowPos(source, shellView, 0, 0, 0, 0,SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		else
+			SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		return true;		
+	}
+	bool Window::setBehindIconsWin7(HWND source)
+	{
+		HWND progman = FindWindowW(L"Progman", nullptr);
+		if (!progman) {
+			ws::log("Win7 path: could not locate Progman.");
 			return false;
 		}
 
-		//for windows 11
+		// Ask the shell to spawn the WorkerW layer.
+		SendMessageTimeout(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
+		Sleep(100);
 
-#ifndef WS_EX_NOREDIRECTIONBITMAP
-#define WS_EX_NOREDIRECTIONBITMAP 0x00200000L
-#endif
+		// Locate the top-level window that currently hosts SHELLDLL_DefView.
+		struct Ctx { HWND host; } ctx{ nullptr };
+		EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK{
+			auto* c = reinterpret_cast<Ctx*>(lp);
+			if (FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
+				c->host = top;
+				return FALSE;
+			}
+			return TRUE;
+		}, reinterpret_cast<LPARAM>(&ctx));
+		HWND defViewHost = ctx.host;
 
-		bool raised = (GetWindowLongPtr(progman, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0;
-		if (!raised) {
-			ws::log("Can't set window behind icons on this computer due to imcompatible desktop design.");
-			return false;
+
+		HWND workerW = nullptr;
+
+		// If the DefView host itself is a WorkerW, the wallpaper WorkerW is the
+		// next top-level WorkerW in z-order (walk down the chain).
+		if (defViewHost) {
+			wchar_t cls[256] = {};
+			GetClassNameW(defViewHost, cls, 256);
+			if (wcscmp(cls, L"WorkerW") == 0) {
+				HWND next = GetWindow(defViewHost, GW_HWNDNEXT);
+				while (next) {
+					GetClassNameW(next, cls, 256);
+					if (wcscmp(cls, L"WorkerW") == 0) {
+						workerW = next;
+						break;
+					}
+					next = GetWindow(next, GW_HWNDNEXT);
+				}
+			}
 		}
 
+		// Fallback: a WorkerW child of Progman.
+		if (!workerW)
+			workerW = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
 
-		//SetAllStyle
+		// Last resort: parent to Progman itself. This is what XP does and it
+		// works on Win7 as long as Aero is off.
+		if (!workerW) {
+			ws::log("Win7 path: no WorkerW found, falling back to Progman.");
+			workerW = progman;
+		}
+
 		SetWindowLongA(source, GWL_STYLE, 0);
 		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
 
 		SetParent(source, workerW);
 
-		//add WS_EX_LAYERED
 		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
 		exStyle |= WS_EX_LAYERED;
 		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
-
-
-		//enable alpha only
 		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
 
 		ShowWindow(source, SW_SHOW);
 
-		//setLayerAfter shellView
-		SetWindowPos(source, shellView, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		// workerW owns its own children; put ours at the bottom of its stack.
+		SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,
+					 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		return true;		
+	}
+	bool Window::setBehindIconsWin8to10(HWND source)
+	{
+		HWND progman = FindWindowW(L"Progman", nullptr);
+		if (!progman) {
+			ws::log("Win8-10 path: could not locate Progman.");
+			return false;
+		}
+
+		SendMessageTimeout(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
+		Sleep(100);
+
+		// Preferred: a WorkerW child of Progman that does NOT contain DefView.
+		HWND workerW = nullptr;
+		HWND child = nullptr;
+		while ((child = FindWindowExW(progman, child, L"WorkerW", nullptr))) {
+			if (!FindWindowExW(child, nullptr, L"SHELLDLL_DefView", nullptr)) {
+				workerW = child;
+				break;
+			}
+		}
+
+		// Fallback 1: any WorkerW child of Progman.
+		if (!workerW)
+			workerW = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+
+		// Fallback 2: any top-level WorkerW that does not contain DefView.
+		if (!workerW) {
+			struct Ctx { HWND w; } ctx{ nullptr };
+			EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK{
+				auto* c = reinterpret_cast<Ctx*>(lp);
+				wchar_t cls[256] = {};
+				GetClassNameW(top, cls, 256);
+				if (wcscmp(cls, L"WorkerW") == 0) {
+					if (!FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
+						c->w = top;
+						return FALSE;
+					}
+				}
+				return TRUE;
+			}, reinterpret_cast<LPARAM>(&ctx));
+			workerW = ctx.w;
+		}
+
+		if (!workerW) {
+			ws::log("Win8-10 path: no WorkerW found.");
+			return false;
+		}
+
+		SetWindowLongA(source, GWL_STYLE, 0);
+		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+
+		SetParent(source, workerW);
+
+		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		exStyle |= WS_EX_LAYERED;
+		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
+
+		ShowWindow(source, SW_SHOW);
+
+		SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,
+					 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		return true;		
+	}
+
+	bool Window::setBehindIconsWin11(HWND source)
+	{
+	#ifndef WS_EX_NOREDIRECTIONBITMAP
+	#define WS_EX_NOREDIRECTIONBITMAP 0x00200000L
+	#endif
+
+		HWND progman = FindWindowW(L"Progman", nullptr);
+		if (!progman) {
+			ws::log("Win11 path: could not locate Progman.");
+			return false;
+		}
+
+		bool raised = (GetWindowLongPtr(progman, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0;
+		if (!raised) {
+			// Not the raised desktop topology after all – use the 8-10 path.
+			return setBehindIconsWin8to10(source);
+		}
+
+		SendMessageTimeout(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
+		Sleep(100);
+
+		// Find the WorkerW child of Progman that does NOT host SHELLDLL_DefView.
+		HWND workerW = nullptr;
+		HWND child = nullptr;
+		while ((child = FindWindowExW(progman, child, L"WorkerW", nullptr))) {
+			if (!FindWindowExW(child, nullptr, L"SHELLDLL_DefView", nullptr)) {
+				workerW = child;
+				break;
+			}
+		}
+
+		// Fallback: any WorkerW child of Progman.
+		if (!workerW)
+			workerW = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+
+		// Last resort: parent to Progman directly.
+		if (!workerW) {
+			ws::log("Win11 path: no WorkerW child, falling back to Progman.");
+			workerW = progman;
+		}
+
+		// SHELLDLL_DefView may be a direct child of Progman, or nested.
+		HWND shellView = FindWindowExW(progman, nullptr, L"SHELLDLL_DefView", nullptr);
+		if (!shellView) {
+			HWND scan = nullptr;
+			while ((scan = FindWindowExW(progman, scan, nullptr, nullptr))) {
+				shellView = FindWindowExW(scan, nullptr, L"SHELLDLL_DefView", nullptr);
+				if (shellView) break;
+			}
+		}
+
+		// Convert our top-level window into a child.
+		SetWindowLongA(source, GWL_STYLE, 0);
+		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+
+		SetParent(source, workerW);
+
+		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		exStyle |= WS_EX_LAYERED;
+		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
+
+		ShowWindow(source, SW_SHOW);
+
+		// If shellView shares a parent with our window (both children of Progman),
+		// we can insert directly after it; otherwise just go to the bottom of the
+		// workerW stack.
+		if (shellView && GetParent(shellView) == GetParent(source)) {
+			SetWindowPos(source, shellView, 0, 0, 0, 0,
+						 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		} else {
+			SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,
+						 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+		}
 		return true;
+	}
+	
+
+	//Sets the window behind the desktop icons. (WARNING -  this will override many window settings and styles to produce a functional desktop window.)
+	bool Window::setBehindIcons(HWND source)
+	{
+		if (!source || !IsWindow(source)) {
+			ws::log("setBehindIcons: invalid source HWND.");
+			return false;
+		}
+
+		const std::string version = getWindowsVersion();
+
+		if (version == "XP" || version == "Vista" || version == "PRE_XP")
+			return setBehindIconsWinXP(source);
+
+		if (version == "7")
+			return setBehindIconsWin7(source);
+
+		if (version == "8" || version == "8.1" || version == "10")
+			return setBehindIconsWin8to10(source);
+
+		if (version == "11")
+			return setBehindIconsWin11(source);
+
+		// Unknown – try each method
+		ws::log("setBehindIcons: unknown Windows version, trying all strategies.");
+		if (setBehindIconsWin7(source))   return true;
+		if (setBehindIconsWin8to10(source)) return true;
+		if (setBehindIconsWin11(source))  return true;
+		if (setBehindIconsWinXP(source))  return true;
+		return false;
 	}
 
 	//overload that sets this window behind the icons.
@@ -5698,11 +5948,26 @@ namespace ws
 	std::vector<ws::Vec2i> Screen::getDisplayModes() {
 		std::vector<ws::Vec2i> modes;
 
-		DEVMODE dm = {};
-		dm.dmSize = sizeof(dm);
-		DWORD modeNum = 0;
+		using EnumDisplaySettingsWProc = BOOL (WINAPI *)(LPCWSTR lpszDeviceName, DWORD iModeNum, DEVMODEW* lpDevMode);
 
-		while (EnumDisplaySettings(NULL, modeNum, &dm)) {
+		HMODULE hUser32 = LoadLibraryW(L"user32.dll");
+		if(!hUser32)
+			return modes;
+		
+		auto pEnumDisplaySettingsW = reinterpret_cast<EnumDisplaySettingsWProc>(
+			GetProcAddress(hUser32, "EnumDisplaySettingsW")
+		);
+		
+		if (!pEnumDisplaySettingsW) {
+			FreeLibrary(hUser32);
+			return modes;
+		}
+
+		DEVMODEW dm{};
+		dm.dmSize = static_cast<WORD>(sizeof(dm));
+		DWORD modeNum = 0;
+		while (pEnumDisplaySettingsW(nullptr, modeNum, &dm))
+		{
 			ws::Vec2i res = ws::Vec2i((int)dm.dmPelsWidth, (int)dm.dmPelsHeight);
 
 			bool duplicate = false;
@@ -5717,6 +5982,8 @@ namespace ws
 			}
 			modeNum++;
 		}
+		
+		FreeLibrary(hUser32);
 
 		//sort according to size with smallest first.
 		std::sort(modes.begin(), modes.end(), [](ws::Vec2i& a, ws::Vec2i& b) {

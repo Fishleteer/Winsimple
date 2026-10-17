@@ -235,7 +235,7 @@ namespace ws
 				if (hData) {
 					LPCWSTR pGlobal = (LPCWSTR)GlobalLock(hData);
 					if (pGlobal) {
-						data.setText(ws::SHORT(pGlobal));
+						data.setText(ws::toUTF8(pGlobal));
 						GlobalUnlock(hData);
 					}
 				}
@@ -250,7 +250,7 @@ namespace ws
 		
 		bool copyText(const std::string& str)
 		{
-			const std::wstring text = ws::WIDE(str);
+			const std::wstring text = ws::toUTF16(str);
 			if (!OpenClipboardCheck()) return false;
 			EmptyClipboard();
 			
@@ -276,7 +276,7 @@ namespace ws
 		
 		bool copyFile(const std::string& filePath)
 		{
-			std::wstring widePath = ws::WIDE(filePath);
+			std::wstring widePath = ws::toUTF16(filePath);
 			if (!OpenClipboardCheck()) return false;
 			EmptyClipboard();
 			
@@ -322,7 +322,7 @@ namespace ws
 			std::vector<std::wstring> widePaths;
 			size_t totalPathsSize = 0;
 			for (const auto& path : filePaths) {
-				std::wstring widePath = ws::WIDE(path);
+				std::wstring widePath = ws::toUTF16(path);
 				widePaths.push_back(widePath);
 				totalPathsSize += (widePath.length() + 1) * sizeof(wchar_t);
 			}
@@ -458,7 +458,7 @@ namespace ws
 							if (bufferSize > 0) {
 								std::wstring widePath(bufferSize + 1, L'\0');
 								DragQueryFileW(hDrop, i, &widePath[0], bufferSize + 1);
-								filePaths.push_back(ws::SHORT(widePath));
+								filePaths.push_back(ws::toUTF8(widePath));
 							}
 						}
 						GlobalUnlock(hData);
@@ -760,7 +760,7 @@ namespace ws
 				for (UINT i = 0; i < count; i++) {
 					wchar_t path[MAX_PATH] = {};
 					DragQueryFileW(hDrop, i, path, MAX_PATH);
-					files.push_back(ws::SHORT(path));
+					files.push_back(ws::toUTF8(path));
 				}
 				data.setFiles(files);
 				GlobalUnlock(stg.hGlobal);
@@ -851,7 +851,7 @@ namespace ws
 			STGMEDIUM textStg = {};
 			if (SUCCEEDED(obj->GetData(&textFmt, &textStg))) {
 				LPCWSTR p = (LPCWSTR)GlobalLock(textStg.hGlobal);
-				if (p) data.setText(ws::SHORT(p));
+				if (p) data.setText(ws::toUTF8(p));
 				GlobalUnlock(textStg.hGlobal);
 				ReleaseStgMedium(&textStg);
 			}
@@ -861,7 +861,7 @@ namespace ws
 				STGMEDIUM urlStg = {};
 				if (SUCCEEDED(obj->GetData(&urlFmt, &urlStg))) {
 					LPCWSTR p = (LPCWSTR)GlobalLock(urlStg.hGlobal);
-					if (p) data.setText(ws::SHORT(p));
+					if (p) data.setText(ws::toUTF8(p));
 					GlobalUnlock(urlStg.hGlobal);
 					ReleaseStgMedium(&urlStg);
 				}

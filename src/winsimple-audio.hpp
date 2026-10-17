@@ -63,7 +63,7 @@ namespace ws
 		
 		static bool mciSimple(std::string command,bool sendError = true)
 		{
-			MCIERROR err = mciSendStringA(TO_LPCSTR(command),NULL,0,NULL);
+			MCIERROR err = mciSendStringA(command.c_str(),NULL,0,NULL);
 		    if (err) 
 			{
 		        if(sendError)
@@ -167,9 +167,9 @@ namespace ws
 
 
 			//Get shortened path name because mciSendStringA does not support long paths.
-			std::wstring wpath = GetShortPathNameSafe(WIDE(m_path));
+			std::wstring wpath = GetShortPathNameSafe(toUTF16(m_path));
 			if(!wpath.empty())
-				m_path = SHORT(wpath);
+				m_path = toUTF8(wpath);
 			
 			
 			std::string command;
@@ -248,9 +248,9 @@ namespace ws
 			
 
 			//Get shortened path name because mciSendStringA does not support long paths.
-			std::wstring wpath = GetShortPathNameSafe(WIDE(path));
+			std::wstring wpath = GetShortPathNameSafe(toUTF16(path));
 			if(!wpath.empty())
-				path = SHORT(wpath);
+				path = toUTF8(wpath);
 			
 			
 			
