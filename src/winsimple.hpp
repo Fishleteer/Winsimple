@@ -1,4 +1,4 @@
-//WINSIMPLE VERSION 1.7
+//WINSIMPLE VERSION 1.8.0
 #ifndef WINSIMPLE_HPP
 #define WINSIMPLE_HPP
 
@@ -75,6 +75,23 @@ namespace ws
 	//////////////////////////////////////////////////////////////////////////////
 	//                              DEFINITIONS
 	//////////////////////////////////////////////////////////////////////////////
+
+	//For dyanamic API loading
+    template<typename Fn>
+    inline Fn loadApi(const wchar_t* dllName, const char* exportName) {
+        HMODULE h = LoadLibraryW(dllName);
+        if (!h) return nullptr;
+        return reinterpret_cast<Fn>(GetProcAddress(h, exportName));
+    }
+
+    // For dynamic API loading but for DLLs that are known to be already loaded (user32, gdi32…)
+    template<typename Fn>
+    inline Fn loadApiFrom(const wchar_t* dllName, const char* exportName) {
+        HMODULE h = GetModuleHandleW(dllName);
+        if (!h) h = LoadLibraryW(dllName);
+        if (!h) return nullptr;
+        return reinterpret_cast<Fn>(GetProcAddress(h, exportName));
+    }
 
 	//For ws::Vec2
 	template<typename T, typename = void>
@@ -1700,53 +1717,75 @@ namespace ws
 
 	};
 	
-	//Window Manager Stuff
-
-	//=========== GLOBAL INPUT ===========
-
-	class Screen
+    class Monitor 
 	{
-	public:
-		
-		// Acquires the desktop HDC.
-		Screen();
-		
-		// Releases the desktop HDC.
-		~Screen();
-		
-		HDC getHDC();
-		
-		// Enumerates all unique display resolutions.
-		std::vector<ws::Vec2i> getDisplayModes();
-		
-		// Changes the display resolution; returns status string.
-		std::string setSize(int x, int y);
-		
-		std::string setSize(ws::Vec2i size);
-		
-		// Returns the current screen size.
-		ws::Vec2i getSize();
-		
-		// Gets a pixel from the screen.
-		ws::Hue getPixel(int x, int y);
+		public:
+        
+		Monitor() = default;
+        explicit Monitor(HMONITOR handle);
 
-		ws::Hue getPixel(ws::Vec2i pos);
-		
-		// Sets a pixel on the screen.
-		void setPixel(int x, int y, ws::Hue hue);
-		
-		// Captures the screen into a ws::Texture.
-		ws::Texture getSnapshot();
-		
-		// Returns the system DPI scaling factor.
-		float getDPI();
+        HMONITOR            getHandle()     const;
+        const std::wstring& getDeviceName() const;
+        bool                isValid()       const;
+        bool                isPrimary()     const;
 
-		// Returns the work area (excluding taskbar).
-		ws::IntRect getWorkArea();
-	private:
-		HDC hdc = nullptr;
-		bool valid = true;
-	};
+
+        //default is DPI scaled coordinates. 
+        IntRect getBounds(bool dpi = true) const;
+		IntRect getWorkArea(bool dpi = true) const; 
+		
+
+        Vec2i   getPosition(bool dpi = true)      const;
+		Vec2i   getResolution(bool dpi = true)    const;
+		
+        ws::Vec2f  getDpi()     const;
+        
+        int getRefreshRate() const;
+        int getBitDepth()    const;
+        int getOrientation() const;      // 0, 90, 180, 270
+
+        std::vector<Vec2i> getAvailableResolutions() const;
+        std::vector<int>   getAvailableRefreshRates(Vec2i resolution) const;
+
+        std::string setResolution(Vec2i size);
+        std::string setResolution(int w, int h);
+        std::string setRefreshRate(int hz);
+        std::string setOrientation(int degrees);   // 0 / 90 / 180 / 270
+        std::string setPrimary();
+
+        Texture getSnapshot() const;
+        Texture getSnapshot(const IntRect& subRect) const;   // relative to monitor
+
+        // refresh internal data of Monitor object.
+        void refresh();
+
+        bool operator==(const Monitor& other) const;
+        bool operator!=(const Monitor& other) const;
+
+    private:
+        HMONITOR     m_handle   = nullptr;
+        std::wstring m_deviceName;
+        IntRect      m_bounds   {};
+        IntRect      m_workArea {};
+        UINT         m_dpiX     = 96;
+        UINT         m_dpiY     = 96;
+        bool         m_primary  = false;
+        bool         m_valid    = false;
+    };
+
+    class Screen 
+	{
+		public:
+        static std::vector<Monitor> getMonitors();
+        static Monitor              getPrimaryMonitor();
+        static Monitor              getMonitorAt(Vec2i screenPos);
+
+		//whole desktop actions.
+        static Texture getSnapshot();
+        static Texture getSnapshot(const IntRect& screenRect);
+        static Hue     getPixel(Vec2i screenPos);
+		static void	   setPixel(Vec2i screenPos,ws::Hue hue);
+    };
 
 	typedef BOOL (WINAPI *SetDPIAwareProc)(void);
 	class GDIPInit
@@ -5433,79 +5472,110 @@ namespace ws
 			SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 		return true;		
 	}
-	bool Window::setBehindIconsWin7(HWND source)
-	{
-		HWND progman = FindWindowW(L"Progman", nullptr);
-		if (!progman) {
-			ws::log("Win7 path: could not locate Progman.");
-			return false;
-		}
 
-		// Ask the shell to spawn the WorkerW layer.
-		SendMessageTimeout(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, nullptr);
-		Sleep(100);
+bool Window::setBehindIconsWin7(HWND source)
+{
+    HWND progman = FindWindowW(L"Progman", nullptr);
+    if (!progman) { ws::log("Win7: no Progman"); return false; }
 
-		// Locate the top-level window that currently hosts SHELLDLL_DefView.
-		struct Ctx { HWND host; } ctx{ nullptr };
-		EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK{
-			auto* c = reinterpret_cast<Ctx*>(lp);
-			if (FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
-				c->host = top;
-				return FALSE;
-			}
-			return TRUE;
-		}, reinterpret_cast<LPARAM>(&ctx));
-		HWND defViewHost = ctx.host;
+    // --- DWM detection (same as before) ---
+    typedef HRESULT (WINAPI *PFN_DwmIsCompositionEnabled)(BOOL*);
+    bool dwmEnabled = false;
+    if (HMODULE hDwm = LoadLibraryW(L"dwmapi.dll")) {
+        auto pFn = (PFN_DwmIsCompositionEnabled)GetProcAddress(hDwm, "DwmIsCompositionEnabled");
+        if (pFn) { BOOL e = FALSE; if (SUCCEEDED(pFn(&e))) dwmEnabled = (e != FALSE); }
+        FreeLibrary(hDwm);
+    }
+    if (!dwmEnabled) { ws::log("Win7: DWM off -> XP path"); return setBehindIconsWinXP(source); }
 
+    // --- Trigger + spawn ---
+    SendMessageTimeout(progman, 0x052C, 0,    0,   SMTO_NORMAL, 1000, nullptr);
+    Sleep(80);
+    SendMessageTimeout(progman, 0x052C, 0xD,  0x1, SMTO_NORMAL, 1000, nullptr);
+    SendMessageTimeout(progman, 0x052C, 0xD,  0x0, SMTO_NORMAL, 1000, nullptr);
+    Sleep(150);
 
-		HWND workerW = nullptr;
+    // --- Enumerate ALL top-level WorkerWs and log their state ---
+    struct Cand { HWND h; bool visible; bool hasDefView; };
+    std::vector<Cand> cands;
+    EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK {
+        auto* v = reinterpret_cast<std::vector<Cand>*>(lp);
+        wchar_t cls[256] = {};
+        GetClassNameW(top, cls, 256);
+        if (wcscmp(cls, L"WorkerW") == 0) {
+            Cand c;
+            c.h = top;
+            c.visible = IsWindowVisible(top) != FALSE;
+            c.hasDefView = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr;
+            char buf[160];
+            wsprintfA(buf, "Win7:  WorkerW=%p visible=%d defView=%d",
+                      top, c.visible, c.hasDefView);
+            ws::log(buf);
+            v->push_back(c);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&cands));
 
-		// If the DefView host itself is a WorkerW, the wallpaper WorkerW is the
-		// next top-level WorkerW in z-order (walk down the chain).
-		if (defViewHost) {
-			wchar_t cls[256] = {};
-			GetClassNameW(defViewHost, cls, 256);
-			if (wcscmp(cls, L"WorkerW") == 0) {
-				HWND next = GetWindow(defViewHost, GW_HWNDNEXT);
-				while (next) {
-					GetClassNameW(next, cls, 256);
-					if (wcscmp(cls, L"WorkerW") == 0) {
-						workerW = next;
-						break;
-					}
-					next = GetWindow(next, GW_HWNDNEXT);
-				}
-			}
-		}
+    // Prefer: visible && !hasDefView.  Fall back to any !hasDefView.
+    HWND workerW = nullptr;
+    for (auto& c : cands) if (c.visible && !c.hasDefView) { workerW = c.h; break; }
+    for (auto& c : cands) if (!workerW && !c.hasDefView)   { workerW = c.h; break; }
+    if (!workerW) {
+        ws::log("Win7: no wallpaper WorkerW; falling back to XP path");
+        return setBehindIconsWinXP(source);
+    }
+    ws::log(std::string("Win7: chosen WorkerW visible=") +
+            std::to_string((int)IsWindowVisible(workerW)));
 
-		// Fallback: a WorkerW child of Progman.
-		if (!workerW)
-			workerW = FindWindowExW(progman, nullptr, L"WorkerW", nullptr);
+    // Make sure the parent is visible (fixes cause #1)
+    if (!IsWindowVisible(workerW)) ShowWindow(workerW, SW_SHOW);
 
-		// Last resort: parent to Progman itself. This is what XP does and it
-		// works on Win7 as long as Aero is off.
-		if (!workerW) {
-			ws::log("Win7 path: no WorkerW found, falling back to Progman.");
-			workerW = progman;
-		}
+    // Snapshot the current screen rect so we can restore position exactly
+    RECT oldRect{}; GetWindowRect(source, &oldRect);
 
-		SetWindowLongA(source, GWL_STYLE, 0);
-		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+    // Convert to child BEFORE SetParent so the parent-child relationship is
+    // consistent at the moment of reparenting.  Then commit with FRAMECHANGED.
+    LONG style = GetWindowLongA(source, GWL_STYLE);
+    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+    style |= WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+    SetWindowLongA(source, GWL_STYLE, style);
 
-		SetParent(source, workerW);
+    // Turn OFF WS_EX_LAYERED for the moment.  We'll re-enable it below.
+    LONG ex = GetWindowLongA(source, GWL_EXSTYLE);
+    ex &= ~WS_EX_LAYERED;
+    SetWindowLongA(source, GWL_EXSTYLE, ex);
 
-		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
-		exStyle |= WS_EX_LAYERED;
-		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
-		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
+    SetParent(source, workerW);
 
-		ShowWindow(source, SW_SHOW);
+    // Commit style change: this is the step that was missing before.
+    SetWindowPos(source, HWND_TOP,
+                 oldRect.left, oldRect.top,
+                 oldRect.right  - oldRect.left,
+                 oldRect.bottom - oldRect.top,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
 
-		// workerW owns its own children; put ours at the bottom of its stack.
-		SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,
-					 SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-		return true;		
-	}
+    // Explicit invalidate + update so WM_PAINT actually runs now.
+    InvalidateRect(source, nullptr, TRUE);
+    UpdateWindow(source);
+
+    // Now apply layered alpha.  Using LWA_ALPHA=255 keeps the child fully
+    // opaque; the DWM transparent-surface case (cause #4) usually resolves
+    // once a paint has already landed on the surface.
+    ex = GetWindowLongA(source, GWL_EXSTYLE);
+    ex |= WS_EX_LAYERED;
+    SetWindowLongA(source, GWL_EXSTYLE, ex);
+    SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
+
+    // Final diagnostic
+    RECT fr{}; GetWindowRect(source, &fr);
+    char buf[256];
+    wsprintfA(buf, "Win7: final rect=(%ld,%ld)-(%ld,%ld) vis=%d pvis=%d",
+              fr.left, fr.top, fr.right, fr.bottom,
+              IsWindowVisible(source), IsWindowVisible(workerW));
+    ws::log(buf);
+    return true;
+}
+	
 	bool Window::setBehindIconsWin8to10(HWND source)
 	{
 		HWND progman = FindWindowW(L"Progman", nullptr);
@@ -5927,174 +5997,340 @@ namespace ws
 	}
 	//=====SCREEN=====
 
-			// Acquires the desktop HDC.
-	Screen::Screen() {
-		hdc = GetDC(NULL);
-		if (hdc == NULL)
-			valid = false;
+
+
+
+	Monitor::Monitor(HMONITOR handle) : m_handle(handle)
+	{
+		if(m_handle) refresh();
 	}
 
-	// Releases the desktop HDC.
-	Screen::~Screen() {
-		ReleaseDC(NULL, hdc);
-	}
+	static HRESULT(WINAPI* getDpiForMonitor)(HMONITOR, int, UINT*, UINT*) =
+		ws::loadApi<HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*)>(
+			L"shcore.dll", "GetDpiForMonitor");
+	
+	void Monitor::refresh()
+	{
+		MONITORINFOEXW mi{};
+		mi.cbSize = sizeof(mi);
 
-	HDC Screen::getHDC() {
-		return hdc;
-	}
-
-	// Enumerates all unique display resolutions.
-	std::vector<ws::Vec2i> Screen::getDisplayModes() {
-		std::vector<ws::Vec2i> modes;
-
-		using EnumDisplaySettingsWProc = BOOL (WINAPI *)(LPCWSTR lpszDeviceName, DWORD iModeNum, DEVMODEW* lpDevMode);
-
-		HMODULE hUser32 = LoadLibraryW(L"user32.dll");
-		if(!hUser32)
-			return modes;
-		
-		auto pEnumDisplaySettingsW = reinterpret_cast<EnumDisplaySettingsWProc>(
-			GetProcAddress(hUser32, "EnumDisplaySettingsW")
-		);
-		
-		if (!pEnumDisplaySettingsW) {
-			FreeLibrary(hUser32);
-			return modes;
-		}
-
-		DEVMODEW dm{};
-		dm.dmSize = static_cast<WORD>(sizeof(dm));
-		DWORD modeNum = 0;
-		while (pEnumDisplaySettingsW(nullptr, modeNum, &dm))
+		if(!m_handle || !GetMonitorInfoW(m_handle, &mi)) 
 		{
-			ws::Vec2i res = ws::Vec2i((int)dm.dmPelsWidth, (int)dm.dmPelsHeight);
+			// if it's stale, try to re-find by the device name
+			if(!m_deviceName.empty()) {
+				struct Ctx 
+				{ 
+					const std::wstring* name; 
+					HMONITOR h; 
+				} 
+				ctx{ &m_deviceName, nullptr };
+				
+				EnumDisplayMonitors(nullptr, nullptr,[](HMONITOR h, HDC, LPRECT, LPARAM lp) -> BOOL CALLBACK{
+					auto* c = reinterpret_cast<Ctx*>(lp);
+					MONITORINFOEXW m{}; m.cbSize = sizeof(m);
+					if(GetMonitorInfoW(h, &m) && *c->name == m.szDevice) 
+					{
+						c->h = h; 
+						return FALSE;
+					}
+					return TRUE;
+				}, reinterpret_cast<LPARAM>(&ctx));
 
-			bool duplicate = false;
-			for (const auto& existing : modes) {
-				if (existing.x == res.x && existing.y == res.y) {
-					duplicate = true;
-					break;
+				if(ctx.h && GetMonitorInfoW(ctx.h, &mi))
+					m_handle = ctx.h;
+				else 
+				{
+					m_valid = false;
+					return;
 				}
 			}
-			if (!duplicate) {
-				modes.push_back(res);
+			else 
+			{ 
+				m_valid = false; 
+				return; 
 			}
-			modeNum++;
 		}
-		
-		FreeLibrary(hUser32);
 
-		//sort according to size with smallest first.
-		std::sort(modes.begin(), modes.end(), [](ws::Vec2i& a, ws::Vec2i& b) {
-			return a.x * a.y < b.x * b.y;
-			});
+		m_deviceName = mi.szDevice;
+		m_bounds = { 
+		mi.rcMonitor.left, mi.rcMonitor.top,
+		mi.rcMonitor.right - mi.rcMonitor.left,
+		mi.rcMonitor.bottom - mi.rcMonitor.top 
+		};
+		m_workArea = { 
+		mi.rcWork.left, mi.rcWork.top,
+		mi.rcWork.right - mi.rcWork.left,
+		mi.rcWork.bottom - mi.rcWork.top 
+		};
+		m_primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
 
-		return modes;
-	}
+		if(!getDpiForMonitor || !SUCCEEDED(getDpiForMonitor(m_handle, 0, &m_dpiX, &m_dpiY))) 
+		{
+			//fallback to single display HDC. Expected on windows 7.
+			HDC dc = GetDC(nullptr);
+			m_dpiX = m_dpiY = dc ? static_cast<UINT>(GetDeviceCaps(dc, LOGPIXELSX)) : 96;
+			if(dc) 
+				ReleaseDC(nullptr, dc);
+		}
+		m_valid = true;
+	}	
 
-	// Changes the display resolution; returns status string.
-	std::string Screen::setSize(int x, int y) {
-		return setSize({ x,y });
-	}
-
-	std::string Screen::setSize(ws::Vec2i size) {
-		DEVMODE dm;
-		ZeroMemory(&dm, sizeof(dm));
+	int Monitor::getRefreshRate() const
+	{
+		DEVMODEW dm{}; 
 		dm.dmSize = sizeof(dm);
-		dm.dmPelsWidth = size.x;
-		dm.dmPelsHeight = size.y;
-		dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+		if(!m_valid || !EnumDisplaySettingsW(m_deviceName.c_str(), ENUM_CURRENT_SETTINGS, &dm))
+			return 0;
+		return static_cast<int>(dm.dmDisplayFrequency);
+	}
 
-		LONG result = ChangeDisplaySettings(&dm, CDS_UPDATEREGISTRY);
-		switch (result) {
-		case DISP_CHANGE_SUCCESSFUL:   break;
-		case DISP_CHANGE_BADMODE:      /* resolution not supported */
-			return "INVALID";
-		case DISP_CHANGE_RESTART:      /* need restart */
-			return "NEEDRESTART";
-		default:
-			return "ERROR";
+	int Monitor::getBitDepth() const
+	{
+		DEVMODEW dm{}; 
+		dm.dmSize = sizeof(dm);
+		if(!m_valid || !EnumDisplaySettingsW(m_deviceName.c_str(), ENUM_CURRENT_SETTINGS, &dm))
+			return 0;
+		return static_cast<int>(dm.dmBitsPerPel);
+	}	
+
+	int Monitor::getOrientation() const
+	{
+		DEVMODEW dm{}; 
+		dm.dmSize = sizeof(dm);
+		if(!m_valid || !EnumDisplaySettingsW(m_deviceName.c_str(), ENUM_CURRENT_SETTINGS, &dm))
+			return 0;
+		switch(dm.dmDisplayOrientation) 
+		{
+			case DMDO_90:  return 90;
+			case DMDO_180: return 180;
+			case DMDO_270: return 270;
+			default:       return 0;
 		}
+	}
+	
+	std::vector<Vec2i> Monitor::getAvailableResolutions() const
+	{
+		std::vector<Vec2i> out;
+		if(!m_valid) 
+			return out;
+		DEVMODEW dm{}; 
+		dm.dmSize = sizeof(dm);
+		for(DWORD i = 0; EnumDisplaySettingsW(m_deviceName.c_str(), i, &dm); ++i) 
+		{
+			Vec2i r{ (int)dm.dmPelsWidth, (int)dm.dmPelsHeight };
+			bool dup = false;
+			for(auto& e : out) if(e.x == r.x && e.y == r.y) { dup = true; break; }
+			if(!dup) out.push_back(r);
+		}
+		std::sort(out.begin(), out.end(),[](auto& a, auto& b){ return a.x*a.y < b.x*b.y; });
+		return out;
+	}	
 
-		hdc = GetDC(NULL);
-		if (hdc == NULL)
-			valid = false;
-		return "SUCCESS";
+	std::vector<int> Monitor::getAvailableRefreshRates(Vec2i res) const
+	{
+		std::vector<int> out;
+		if(!m_valid) return out;
+		DEVMODEW dm{}; 
+		dm.dmSize = sizeof(dm);
+		for(DWORD i = 0; EnumDisplaySettingsW(m_deviceName.c_str(), i, &dm); ++i) 
+		{
+			if((int)dm.dmPelsWidth != res.x || (int)dm.dmPelsHeight != res.y) 
+				continue;
+			int hz = (int)dm.dmDisplayFrequency;
+			bool dup = false;
+			for (int e : out) if (e == hz) { dup = true; break; }
+			if(!dup) out.push_back(hz);
+		}
+		std::sort(out.begin(), out.end());
+		return out;
 	}
 
-	// Returns the current screen size.
-	ws::Vec2i Screen::getSize() {
-		int width = GetDeviceCaps(hdc, HORZRES);
-		int height = GetDeviceCaps(hdc, VERTRES);
-		return ws::Vec2i(width, height);
+	HMONITOR            Monitor::getHandle()     const { return m_handle; }
+	const std::wstring& Monitor::getDeviceName() const { return m_deviceName; }
+	bool                Monitor::isValid()       const { return m_valid; }
+	bool                Monitor::isPrimary()     const { return m_primary; }
+
+		
+	IntRect Monitor::getBounds(bool dpi) const 
+	{ 
+		ws::IntRect rect = m_bounds;
+		if(dpi)
+		{
+			float d = getDpi().x;
+			rect.left *= d;
+			rect.top *= d;
+			rect.width *= d;
+			rect.height *= d;
+		}
+		return rect;
+	}
+	IntRect Monitor::getWorkArea(bool dpi) const 
+	{
+		ws::IntRect rect = m_workArea;
+		if(dpi)
+		{
+			float d = getDpi().x;
+			rect.left *= d;
+			rect.top *= d;
+			rect.width *= d;
+			rect.height *= d;
+		}
+		return rect;			
 	}
 
-	// Gets a pixel from the screen.
-	ws::Hue Screen::getPixel(int x, int y) {
-		if (!valid)
-			return ws::Hue::transparent;
-		return getPixel(ws::Vec2i(x, y));
+	Vec2i   Monitor::getPosition(bool dpi)      const { return dpi ? ws::Vec2i( m_bounds.left * getDpi().x, m_bounds.top * getDpi().x) : ws::Vec2i( m_bounds.left, m_bounds.top ); }
+	Vec2i   Monitor::getResolution(bool dpi)    const { return dpi ? ws::Vec2i( m_bounds.width * getDpi().x, m_bounds.height * getDpi().x ) : ws::Vec2i( m_bounds.width, m_bounds.height); }
+	
+	ws::Vec2f  Monitor::getDpi()     const { return ws::Vec2f(m_dpiX / 96.0f,m_dpiY / 96.0f); }
+	bool Monitor::operator==(const Monitor& other) const
+	{
+		if (!m_deviceName.empty() && !other.m_deviceName.empty())
+			return m_deviceName == other.m_deviceName;
+		return m_handle == other.m_handle;
+	}
+	bool Monitor::operator!=(const Monitor& other) const { return !(*this == other); }
+
+	Texture Monitor::getSnapshot() const
+	{
+		if(!m_valid || m_bounds.width <= 0 || m_bounds.height <= 0)
+			return {};
+
+		Texture tex;
+		if(!tex.create(m_bounds.width, m_bounds.height)) return {};
+
+		HDC screen = GetDC(nullptr);
+		if(!screen) return {};
+
+		if(HDC td = tex.getHDC())
+			BitBlt(td, 0, 0, m_bounds.width, m_bounds.height,screen, m_bounds.left, m_bounds.top,SRCCOPY | CAPTUREBLT);
+
+		ReleaseDC(nullptr, screen);
+		return tex;
 	}
 
-	ws::Hue Screen::getPixel(ws::Vec2i pos) {
-		if (!valid)
-			return ws::Hue::transparent;
+	Texture Monitor::getSnapshot(const ws::IntRect &subRect) const
+	{
+		if(!m_valid || subRect.width <= 0 || subRect.height <= 0)
+			return {};
 
-		if (pos.x >= 0 && pos.x < getSize().x && pos.y >= 0 && pos.y < getSize().y)
-			return GetPixel(hdc, pos.x, pos.y);
+		Texture tex;
+		if(!tex.create(subRect.width, subRect.height)) return {};
 
-		return ws::Hue::transparent;
+		HDC screen = GetDC(nullptr);
+		if(!screen) return {};
+
+		if(HDC td = tex.getHDC())
+			BitBlt(td, 0, 0, subRect.width, subRect.height,screen, m_bounds.left + subRect.left, m_bounds.top + subRect.top,SRCCOPY | CAPTUREBLT);
+
+		ReleaseDC(nullptr, screen);
+		return tex;
 	}
 
-	// Sets a pixel on the screen.
-	void Screen::setPixel(int x, int y, ws::Hue hue) {
-		if (!valid)
-			return;
-		if (x >= 0 && x < getSize().x && y >= 0 && y < getSize().y)
-			SetPixel(hdc, x, y, hue);
+	
+	Hue Screen::getPixel(Vec2i screenPos)
+	{
+		HDC dc = GetDC(nullptr);
+		if(!dc) return Hue::transparent;
+		COLORREF c = ::GetPixel(dc, screenPos.x, screenPos.y);
+		ReleaseDC(nullptr, dc);
+		if(c == CLR_INVALID) return Hue::transparent;
+		return Hue(GetRValue(c), GetGValue(c), GetBValue(c), 255);
 	}
 
-	// Captures the screen into a ws::Texture.
-	ws::Texture Screen::getSnapshot() {
-		ws::Texture texture;
-		if (!texture.create(getSize().x, getSize().y, ws::Hue::transparent))
-			return ws::Texture();
-
-		HDC hdcTex = texture.getHDC();
-		if (hdcTex)
-			BitBlt(hdcTex, 0, 0, getSize().x, getSize().y, hdc, 0, 0, SRCCOPY);
-
-		return texture;
+	void Screen::setPixel(Vec2i screenPos,ws::Hue hue)
+	{
+		HDC dc = GetDC(nullptr);
+		if(!dc) return;
+		::SetPixel(dc, screenPos.x, screenPos.y,hue);
+		ReleaseDC(nullptr, dc);
 	}
 
-	// Returns the system DPI scaling factor.
-	float Screen::getDPI() {
-		HDC hdc = GetDC(nullptr);
-		if (!hdc) return 1.0f;
-		int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
-		ReleaseDC(nullptr, hdc);
-		return static_cast<float>(dpi) / 96.0f;
+
+	Texture Screen::getSnapshot()
+	{
+		int x  = GetSystemMetrics(SM_XVIRTUALSCREEN);
+		int y  = GetSystemMetrics(SM_YVIRTUALSCREEN);
+		int cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+		int cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+		return getSnapshot({ x, y, cx, cy });
 	}
 
-	// Returns the work area (excluding taskbar).
-	ws::IntRect Screen::getWorkArea() {
-		RECT area;
-		SystemParametersInfo(SPI_GETWORKAREA, 0, &area, 0);
-		return { area.left, area.top, area.right - area.left, area.bottom - area.top };
+	Texture Screen::getSnapshot(const IntRect& r)
+	{
+		if(r.width <= 0 || r.height <= 0) return {};
+
+		Texture tex;
+		if(!tex.create(r.width, r.height)) return {};
+
+		HDC screen = GetDC(nullptr);
+		if(!screen) return {};
+
+		if(HDC td = tex.getHDC())
+			BitBlt(td, 0, 0, r.width, r.height, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
+
+		ReleaseDC(nullptr, screen);
+		return tex;
+	}	
+	
+
+	std::vector<Monitor> Screen::getMonitors()
+	{
+		std::vector<Monitor> result;
+		EnumDisplayMonitors(
+			nullptr, nullptr,
+			[](HMONITOR h, HDC, LPRECT, LPARAM lp) -> BOOL CALLBACK{
+				reinterpret_cast<std::vector<Monitor>*>(lp)->emplace_back(h);
+				return TRUE;
+			},
+			reinterpret_cast<LPARAM>(&result));
+		return result;
+	}	
+	
+	Monitor Screen::getPrimaryMonitor()
+	{
+		auto all = getMonitors();
+		for(auto& a : all)
+		{
+			if(a.isPrimary())
+				return a;
+		}
+		return Monitor();
 	}
 
+	Monitor Screen::getMonitorAt(ws::Vec2i screenPos)
+	{
+		POINT p{ screenPos.x, screenPos.y };
+		return Monitor(MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST));
+	}
+	
+	
 	// Initializes GDI+ and sets DPI awareness.
 	GDIPInit::GDIPInit() {
 		//GDI+
 		Gdiplus::GdiplusStartup(&gdiplustoken, &gdiplusstartup, nullptr);
-		//get a handle to the already loaded user32.dll
-		HMODULE hUser32 = LoadLibraryW(L"user32.dll");
-		if (hUser32) {
-			SetDPIAwareProc pSetDPIAware = (SetDPIAwareProc)GetProcAddress(hUser32, "SetProcessDPIAware");
-			//only call the function if it exists. - On windows xp or below, this does not exist but is also not needed.
-			if (pSetDPIAware != NULL)
-				pSetDPIAware();
-		}
+
+		// ---- Windows 10: SetProcessDpiAwarenessContext (user32) ---------
+		// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (HANDLE)-4
+		using SetCtxFn = BOOL (WINAPI*)(HANDLE);
+		static SetCtxFn pSetCtx =
+			ws::loadApiFrom<SetCtxFn>(L"user32.dll", "SetProcessDpiAwarenessContext");
+		if (pSetCtx && pSetCtx(reinterpret_cast<HANDLE>(-4)))
+			return;
+
+		// ---- Windows 8.1: SetProcessDpiAwareness (shcore) -------------------
+		// PROCESS_PER_MONITOR_DPI_AWARE == 2
+		using SetAwareFn = HRESULT (WINAPI*)(int);
+		static SetAwareFn pSetAware =
+			ws::loadApi<SetAwareFn>(L"shcore.dll", "SetProcessDpiAwareness");
+		if (pSetAware && SUCCEEDED(pSetAware(2)))
+			return;
+
+		// ---- Windows 7 fallback: SetProcessDPIAware (user32) ---------
+		using SetProcAwareFn = BOOL (WINAPI*)(void);
+		static SetProcAwareFn pSetProcAware =
+			ws::loadApiFrom<SetProcAwareFn>(L"user32.dll", "SetProcessDPIAware");
+		if(pSetProcAware)
+			pSetProcAware();
 	}
 
 	// Shuts down GDI+.

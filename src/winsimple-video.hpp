@@ -79,6 +79,8 @@ namespace ws
 		bool isFinished();
 		void setLoop(bool loops = true);		
 		void close();
+		bool setVolume(int level);
+		int getVolume();
 
 		const UINT WS_VIDEO_EVENT = WM_APP + 1;
 		void update(MSG msg);
@@ -127,9 +129,10 @@ namespace ws
 		LONG m_cRef;
 
 		// Media Foundation objects
-		IMFMediaSession*           m_pSession;
-		IMFMediaSource*            m_pSource;
-		IMFPresentationDescriptor* m_pPD;
+		IMFMediaSession*           m_pSession = nullptr;
+		IMFSimpleAudioVolume*      m_pVolume = nullptr;
+		IMFMediaSource*            m_pSource = nullptr;
+		IMFPresentationDescriptor* m_pPD = nullptr;
 
 		HWND m_hwndEvent;   // Window to receive WS_VIDEO_PLAYER_EVENT
 	};
@@ -650,6 +653,45 @@ namespace ws
 	{
 		Shutdown();
 	}
+	
+	bool Video::setVolume(int level)
+	{
+		if(!m_pSession) return false;
+		if(level < 0) level = 0;
+		if(level > 100) level = 100;
+
+		if(!m_pVolume)
+		{
+			HRESULT hr = MFGetService(
+				m_pSession,
+				MR_POLICY_VOLUME_SERVICE,
+				IID_PPV_ARGS(&m_pVolume));
+			if(FAILED(hr)) 
+				return false;
+		}
+
+		HRESULT hr = m_pVolume->SetMasterVolume(static_cast<float>(level)/100.0f);
+		return SUCCEEDED(hr);
+	}
+
+	int Video::getVolume()
+	{
+		if(!m_pSession) return -1.0f;
+
+		if(!m_pVolume)
+		{
+			HRESULT hr = MFGetService(
+				m_pSession,
+				MR_POLICY_VOLUME_SERVICE,
+				IID_PPV_ARGS(&m_pVolume));
+			if(FAILED(hr)) return -1.0f;
+		}
+
+		float level = 0.0f;
+		HRESULT hr = m_pVolume->GetMasterVolume(&level);
+		return SUCCEEDED(hr) ? level * 100 : -1.0f;
+	}	
+	
 	#endif
 }
 

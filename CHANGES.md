@@ -327,7 +327,7 @@
 * Removed Depreciated getMouseButton and getKey. Use getButton for both mouse and keyboard.
 * Fixed ws::View::toWorld again since I accidentally broke it in this beta version.(nothing major - just coordinate offset)
 * Fixed ws::Font::loadFromSystem(). It now updates to system fonts properly.
-* Dynamically loaded RevokeDragDrop() function in ws::Window so that compiling no longer requires -lole32.
+* Dynamically loaded RevokeDragDrop() function in ws::Window so that compiling no longer requires -lole32. (my mistake. -lole32 is always required for GDI+)
 * Removed ws::Balloon() overload that loaded the icon from file. Using ws::Icon is the safer memory managed alternative.
 * Modified ws::Balloon to remove it's own tray icon after the delay.
 * Added ws::TrayIcon 
@@ -352,7 +352,8 @@
 * WINSIMPLE_ANIMATION_IMPL
 * WINSIMPLE_CLIPBOARD_IMPL
 * Added ws::Video with header winsimple-video.hpp. Use WINSIMPLE_VIDEO_IMPL
-
+* Added int ws::Video::getVolume() and ws::Video::setVolume(int level) - percentage based.
+* Changed ws::Screen to use Monitor objects so that multiple monitors are supported.
 
 
 
