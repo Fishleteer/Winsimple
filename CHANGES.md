@@ -354,7 +354,10 @@
 * Added ws::Video with header winsimple-video.hpp. Use WINSIMPLE_VIDEO_IMPL
 * Added int ws::Video::getVolume() and ws::Video::setVolume(int level) - percentage based.
 * Changed ws::Screen to use Monitor objects so that multiple monitors are supported.
-
+* Added ws::Vec3::normalize(),ws::Vec3::normalized(), and ws::Vec3::getDistance()
+* Changed ws::Rect::contains to work with any x,y object. And removed redundant duplicate.
+* Removed ws::Window::setIcon(std::string file), you can setIcon using an HICON or ws::Icon.
+* Fixed garbage overflow chars in ws::Text::draw and ws::Text::getLocalBounds. utf16 string size now used instead of utf8 string size. 
 
 
 # New major features to be added. 

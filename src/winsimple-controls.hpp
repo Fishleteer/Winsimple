@@ -722,7 +722,7 @@ namespace ws
 	void Child::addStyle(DWORD addedStyle) {
 		style |= addedStyle;
 		if (hwnd) {
-			SetWindowLong(hwnd, GWL_STYLE, style);
+			SetWindowLongPtr(hwnd, GWL_STYLE, style);
 			SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 	}
@@ -730,20 +730,20 @@ namespace ws
 	void Child::removeStyle(DWORD removedStyle) {
 		style &= ~removedStyle;
 		if (hwnd) {
-			SetWindowLong(hwnd, GWL_STYLE, style);
+			SetWindowLongPtr(hwnd, GWL_STYLE, style);
 			SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 	}
 
 	bool Child::hasStyle(DWORD checkStyle) const {
-		DWORD current = GetWindowLong(hwnd, GWL_STYLE);
+		DWORD current = GetWindowLongPtr(hwnd, GWL_STYLE);
 		return (current & checkStyle) != 0;
 	}
 
 	void Child::addExStyle(DWORD addedStyle) {
 		exStyle |= addedStyle;
 		if (hwnd) {
-			SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+			SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
 			SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 	}
@@ -751,13 +751,13 @@ namespace ws
 	void Child::removeExStyle(DWORD removedStyle) {
 		exStyle &= ~removedStyle;
 		if (hwnd) {
-			SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+			SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
 			SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 	}
 
 	bool Child::hasExStyle(DWORD checkStyle) const {
-		DWORD current = GetWindowLong(hwnd, GWL_EXSTYLE);
+		DWORD current = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
 		return (current & checkStyle) != 0;
 	}
 
@@ -1145,7 +1145,7 @@ namespace ws
 			addStyle(CBS_DROPDOWNLIST);  // Non-editable combo box
 		}
 
-		SetWindowLong(hwnd, GWL_STYLE, style);
+		SetWindowLongPtr(hwnd, GWL_STYLE, style);
 		SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 	}

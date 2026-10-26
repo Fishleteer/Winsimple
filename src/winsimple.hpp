@@ -250,7 +250,28 @@ namespace ws
 		Vec3 operator+() const { return *this; }
 		Vec3 operator-() const { return Vec3(-x, -y, -z); }
 
+		void normalize()
+		{
+			double length = getDistance();
+			if(length > 0)
+			{
+				x /= length;
+				y /= length;
+				z /= length;
+			}
+		}	
 
+		Vec3 normalized()
+		{
+			Vec3 ret = *this;
+			ret.normalize();
+			return ret;
+		}	
+		
+		float getDistance()
+		{
+			return std::sqrt(x*x + y*y + z*z);
+		}
 	};
 
 	using Vec3i = Vec3<int>;
@@ -316,11 +337,8 @@ namespace ws
 			return !(other.left > left + width || other.top > top + height || other.left + other.width < left || other.top + other.height < top);
 		}
 
-		bool contains(const ws::Vec2i& point) const {
-			return point.x >= left && point.x < left + width &&
-				point.y >= top && point.y < top + height;
-		}
-		bool contains(const ws::Vec2f& point) const {
+		template<typename U, typename = std::enable_if_t<ws::has_xy_members<U>::value>>
+		bool contains(const U& point) const {
 			return point.x >= left && point.x < left + width &&
 				point.y >= top && point.y < top + height;
 		}
@@ -1672,9 +1690,7 @@ namespace ws
 		
 		//Sets the window icon to a given HICON. - This function is not responsible for cleanup of your HICON handle.
 		bool setIcon(HICON icon, DWORD size = ICON_SMALL);
-		
-		//Sets the window icon to a given .ico file.
-		bool setIcon(std::string file, DWORD size = ICON_SMALL);
+
 		
 		HICON getIcon();
 		
@@ -1725,18 +1741,18 @@ namespace ws
         explicit Monitor(HMONITOR handle);
 
         HMONITOR            getHandle()     const;
-        const std::wstring& getDeviceName() const;
+        const std::string getDeviceName() const;
         bool                isValid()       const;
         bool                isPrimary()     const;
 
 
         //default is DPI scaled coordinates. 
-        IntRect getBounds(bool dpi = true) const;
-		IntRect getWorkArea(bool dpi = true) const; 
+        IntRect getBounds(bool logical = false) const;
+		IntRect getWorkArea(bool logical = false) const; 
 		
 
-        Vec2i   getPosition(bool dpi = true)      const;
-		Vec2i   getResolution(bool dpi = true)    const;
+        Vec2i   getPosition(bool logical = false)      const;
+		Vec2i   getResolution(bool logical = false)    const;
 		
         ws::Vec2f  getDpi()     const;
         
@@ -4163,10 +4179,11 @@ namespace ws
 
 		Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
 		format.SetFormatFlags(format.GetFormatFlags() | Gdiplus::StringFormatFlagsNoFitBlackBox | Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
-
+		
+		std::wstring wtext = ws::toUTF16(text);
 		path.AddString(
-			ws::toUTF16(text).c_str(),
-			static_cast<INT>(text.length()),
+			wtext.c_str(),
+			static_cast<INT>(wtext.length()),
 			fontRef->getFamilyHandle(),
 			style,
 			static_cast<Gdiplus::REAL>(charSize),
@@ -4204,10 +4221,11 @@ namespace ws
 		Gdiplus::GraphicsPath path;
 		Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
 		format.SetFormatFlags(format.GetFormatFlags() | Gdiplus::StringFormatFlagsNoFitBlackBox | Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
-
+		
+		std::wstring wtext = ws::toUTF16(text);
 		path.AddString(
-			ws::toUTF16(text).c_str(),
-			static_cast<INT>(text.length()),
+			wtext.c_str(),
+			static_cast<INT>(wtext.length()),
 			fontRef->getFamilyHandle(),
 			style,
 			static_cast<Gdiplus::REAL>(charSize),
@@ -4993,7 +5011,8 @@ namespace ws
 		MSG msg;
 		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 
-			if (msg.message == WM_QUIT) {
+			if(msg.message == WM_QUIT) 
+			{
 				isRunning = false;
 				return false;
 			}
@@ -5001,14 +5020,14 @@ namespace ws
 
 			bool isOurs = (msg.hwnd == hwnd || IsChild(hwnd, msg.hwnd));
 
-			if (isOurs)
+			if(isOurs)
 				msgQ.push(msg);
-
-			if (isOurs && !IsDialogMessage(hwnd, &msg)) {
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-			}
-			else if (!isOurs) {
+			
+			if(msgQ.size() > 4096)//exceeded 200kb. Pop the oldest message.
+				msgQ.pop();
+				
+			if(!isOurs || !IsDialogMessage(hwnd, &msg)) 
+			{
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
 			}
@@ -5156,7 +5175,7 @@ namespace ws
 		DWORD s = getStyle();
 		s |= style;
 
-		SetWindowLongA(hwnd, GWL_STYLE, s);
+		SetWindowLongPtr(hwnd, GWL_STYLE, s);
 	}
 
 	// Removes a window style.
@@ -5168,7 +5187,7 @@ namespace ws
 		s &= ~style;
 
 
-		SetWindowLongA(hwnd, GWL_STYLE, s);
+		SetWindowLongPtr(hwnd, GWL_STYLE, s);
 	}
 
 	// Sets all window styles at once.
@@ -5176,9 +5195,9 @@ namespace ws
 		if (!hwnd)
 			return;
 
-		SetWindowLongA(hwnd, GWL_STYLE, 0);
+		SetWindowLongPtr(hwnd, GWL_STYLE, 0);
 
-		SetWindowLongA(hwnd, GWL_STYLE, style);
+		SetWindowLongPtr(hwnd, GWL_STYLE, style);
 	}
 
 	// Adds an extended style.
@@ -5190,7 +5209,7 @@ namespace ws
 		s |= style;
 
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, s);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, s);
 	}
 
 	// Removes an extended style.
@@ -5202,7 +5221,7 @@ namespace ws
 		s &= ~style;
 
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, s);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, s);
 	}
 
 	// Sets all extended styles.
@@ -5210,19 +5229,19 @@ namespace ws
 		if (!hwnd)
 			return;
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, 0);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, 0);
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, style);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, style);
 	}
 
 	//returns the extended window styles for this window
 	DWORD Window::getExStyle() const {
-		return GetWindowLong(hwnd, GWL_EXSTYLE);
+		return GetWindowLongPtr(hwnd, GWL_EXSTYLE);
 	}
 
 	//returns the non-extended window styles for this window.
 	DWORD Window::getStyle() const {
-		return GetWindowLong(hwnd, GWL_STYLE);
+		return GetWindowLongPtr(hwnd, GWL_STYLE);
 
 	}
 
@@ -5443,138 +5462,114 @@ namespace ws
 
 	bool Window::setBehindIconsWinXP(HWND source)
 	{
-		HWND progman = FindWindowW(L"Progman",nullptr);
-		if(!progman)
-		{
-			ws::log("WinXP path: Could not locate progman.");
-			return false;
-		}
-		
-		//switch the window into child mode
-		SetWindowLongA(source, GWL_STYLE, 0);
-		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
-		
-		SetParent(source, progman);
-		
-		// Layered window for alpha blending.
-		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
-		exStyle |= WS_EX_LAYERED;
-		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
-		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
-
-		ShowWindow(source, SW_SHOW);		
-		
-		// Try to sit under the icons if we can find them.
-		HWND shellView = FindWindowExW(progman, nullptr, L"SHELLDLL_DefView", nullptr);
-		if(shellView)
-			SetWindowPos(source, shellView, 0, 0, 0, 0,SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-		else
-			SetWindowPos(source, HWND_BOTTOM, 0, 0, 0, 0,SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-		return true;		
+		ws::log("Cannot set window behind icons on windows XP. \n ListView renders both wallpaper and icons on one window.\n No separation exists.");
+		return false;
 	}
 
-bool Window::setBehindIconsWin7(HWND source)
-{
-    HWND progman = FindWindowW(L"Progman", nullptr);
-    if (!progman) { ws::log("Win7: no Progman"); return false; }
+	bool Window::setBehindIconsWin7(HWND source)
+	{
+		HWND progman = FindWindowW(L"Progman", nullptr);
+		if (!progman) { ws::log("Win7: no Progman"); return false; }
 
-    // --- DWM detection (same as before) ---
-    typedef HRESULT (WINAPI *PFN_DwmIsCompositionEnabled)(BOOL*);
-    bool dwmEnabled = false;
-    if (HMODULE hDwm = LoadLibraryW(L"dwmapi.dll")) {
-        auto pFn = (PFN_DwmIsCompositionEnabled)GetProcAddress(hDwm, "DwmIsCompositionEnabled");
-        if (pFn) { BOOL e = FALSE; if (SUCCEEDED(pFn(&e))) dwmEnabled = (e != FALSE); }
-        FreeLibrary(hDwm);
-    }
-    if (!dwmEnabled) { ws::log("Win7: DWM off -> XP path"); return setBehindIconsWinXP(source); }
+		//DWM detection. 
+		typedef HRESULT (WINAPI *PFN_DwmIsCompositionEnabled)(BOOL*);
+		bool dwmEnabled = false;
+		if (HMODULE hDwm = LoadLibraryW(L"dwmapi.dll")) {
+			auto pFn = (PFN_DwmIsCompositionEnabled)GetProcAddress(hDwm, "DwmIsCompositionEnabled");
+			if (pFn) { BOOL e = FALSE; if (SUCCEEDED(pFn(&e))) dwmEnabled = (e != FALSE); }
+			FreeLibrary(hDwm);
+		}
+		if (!dwmEnabled) { ws::log("Win7: DWM off -> XP path"); return setBehindIconsWinXP(source); }
 
-    // --- Trigger + spawn ---
-    SendMessageTimeout(progman, 0x052C, 0,    0,   SMTO_NORMAL, 1000, nullptr);
-    Sleep(80);
-    SendMessageTimeout(progman, 0x052C, 0xD,  0x1, SMTO_NORMAL, 1000, nullptr);
-    SendMessageTimeout(progman, 0x052C, 0xD,  0x0, SMTO_NORMAL, 1000, nullptr);
-    Sleep(150);
+		// Trigger + spawn
+		SendMessageTimeout(progman, 0x052C, 0,    0,   SMTO_NORMAL, 1000, nullptr);
+		Sleep(80);
+		SendMessageTimeout(progman, 0x052C, 0xD,  0x1, SMTO_NORMAL, 1000, nullptr);
+		SendMessageTimeout(progman, 0x052C, 0xD,  0x0, SMTO_NORMAL, 1000, nullptr);
+		Sleep(150);
 
-    // --- Enumerate ALL top-level WorkerWs and log their state ---
-    struct Cand { HWND h; bool visible; bool hasDefView; };
-    std::vector<Cand> cands;
-    EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK {
-        auto* v = reinterpret_cast<std::vector<Cand>*>(lp);
-        wchar_t cls[256] = {};
-        GetClassNameW(top, cls, 256);
-        if (wcscmp(cls, L"WorkerW") == 0) {
-            Cand c;
-            c.h = top;
-            c.visible = IsWindowVisible(top) != FALSE;
-            c.hasDefView = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr;
-            char buf[160];
-            wsprintfA(buf, "Win7:  WorkerW=%p visible=%d defView=%d",
-                      top, c.visible, c.hasDefView);
-            ws::log(buf);
-            v->push_back(c);
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&cands));
+		//Enumerate ALL top-level WorkerWs and log their state
+		struct Cand { HWND h; bool visible; bool hasDefView; };
+		std::vector<Cand> cands;
+		EnumWindows([](HWND top, LPARAM lp) -> BOOL CALLBACK {
+			auto* v = reinterpret_cast<std::vector<Cand>*>(lp);
+			wchar_t cls[256] = {};
+			GetClassNameW(top, cls, 256);
+			if (wcscmp(cls, L"WorkerW") == 0) {
+				Cand c;
+				c.h = top;
+				c.visible = IsWindowVisible(top) != FALSE;
+				c.hasDefView = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr;
+				char buf[160];
+				wsprintfA(buf, "Win7:  WorkerW=%p visible=%d defView=%d",
+						  top, c.visible, c.hasDefView);
+				ws::log(buf);
+				v->push_back(c);
+			}
+			return TRUE;
+		}, reinterpret_cast<LPARAM>(&cands));
+		
+		// Prefer: visible && !hasDefView.  Fall back to any !hasDefView.
+		HWND workerW = nullptr;
+		for (auto& c : cands) if (c.visible && !c.hasDefView) { workerW = c.h; break; }
+		for (auto& c : cands) if (!workerW && !c.hasDefView)   { workerW = c.h; break; }
+		if(!workerW) 
+		{
+			ws::log("Win7: no wallpaper WorkerW; falling back to XP path");
+			return setBehindIconsWinXP(source);
+		}
+		ws::log(std::string("Win7: chosen WorkerW visible=") +
+				std::to_string((int)IsWindowVisible(workerW)));
+		
+		// Make sure the parent is visible
+		if(!IsWindowVisible(workerW)) ShowWindow(workerW, SW_SHOW);
 
-    // Prefer: visible && !hasDefView.  Fall back to any !hasDefView.
-    HWND workerW = nullptr;
-    for (auto& c : cands) if (c.visible && !c.hasDefView) { workerW = c.h; break; }
-    for (auto& c : cands) if (!workerW && !c.hasDefView)   { workerW = c.h; break; }
-    if (!workerW) {
-        ws::log("Win7: no wallpaper WorkerW; falling back to XP path");
-        return setBehindIconsWinXP(source);
-    }
-    ws::log(std::string("Win7: chosen WorkerW visible=") +
-            std::to_string((int)IsWindowVisible(workerW)));
+		// Snapshot the current screen rect so position is restored exactly
+		RECT oldRect{}; GetWindowRect(source, &oldRect);
 
-    // Make sure the parent is visible (fixes cause #1)
-    if (!IsWindowVisible(workerW)) ShowWindow(workerW, SW_SHOW);
+		// Convert to child BEFORE SetParent so the parent-child relationship is
+		// consistent at the moment of reparenting.  Then commit with FRAMECHANGED.
+		LONG style = GetWindowLongPtr(source, GWL_STYLE);
+		style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+		style |= WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+		SetWindowLongPtr(source, GWL_STYLE, style);
+		
+		
+		// Turn OFF WS_EX_LAYERED for the moment.  We'll re-enable it below.
+		LONG ex = GetWindowLongPtr(source, GWL_EXSTYLE);
+		ex &= ~WS_EX_LAYERED;
+		SetWindowLongPtr(source, GWL_EXSTYLE, ex);
+		
+		SetParent(source, workerW);
+		
+		// Commit style change: this is the step that was missing before.
+		SetWindowPos(source, HWND_TOP,
+					 oldRect.left, oldRect.top,
+					 oldRect.right  - oldRect.left,
+					 oldRect.bottom - oldRect.top,
+					 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+		 
+		// Explicit invalidate + update so WM_PAINT actually runs now.
+		InvalidateRect(source, nullptr, TRUE);
+		UpdateWindow(source);
 
-    // Snapshot the current screen rect so we can restore position exactly
-    RECT oldRect{}; GetWindowRect(source, &oldRect);
+		// Now apply layered alpha.  Using LWA_ALPHA=255 keeps the child fully
+		// opaque; the DWM transparent-surface case (cause #4) usually resolves
+		// once a paint has already landed on the surface.
+		ex = GetWindowLongPtr(source, GWL_EXSTYLE);
+		ex |= WS_EX_LAYERED;
+		SetWindowLongPtr(source, GWL_EXSTYLE, ex);
+		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
 
-    // Convert to child BEFORE SetParent so the parent-child relationship is
-    // consistent at the moment of reparenting.  Then commit with FRAMECHANGED.
-    LONG style = GetWindowLongA(source, GWL_STYLE);
-    style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
-    style |= WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
-    SetWindowLongA(source, GWL_STYLE, style);
-
-    // Turn OFF WS_EX_LAYERED for the moment.  We'll re-enable it below.
-    LONG ex = GetWindowLongA(source, GWL_EXSTYLE);
-    ex &= ~WS_EX_LAYERED;
-    SetWindowLongA(source, GWL_EXSTYLE, ex);
-
-    SetParent(source, workerW);
-
-    // Commit style change: this is the step that was missing before.
-    SetWindowPos(source, HWND_TOP,
-                 oldRect.left, oldRect.top,
-                 oldRect.right  - oldRect.left,
-                 oldRect.bottom - oldRect.top,
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
-
-    // Explicit invalidate + update so WM_PAINT actually runs now.
-    InvalidateRect(source, nullptr, TRUE);
-    UpdateWindow(source);
-
-    // Now apply layered alpha.  Using LWA_ALPHA=255 keeps the child fully
-    // opaque; the DWM transparent-surface case (cause #4) usually resolves
-    // once a paint has already landed on the surface.
-    ex = GetWindowLongA(source, GWL_EXSTYLE);
-    ex |= WS_EX_LAYERED;
-    SetWindowLongA(source, GWL_EXSTYLE, ex);
-    SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
-
-    // Final diagnostic
-    RECT fr{}; GetWindowRect(source, &fr);
-    char buf[256];
-    wsprintfA(buf, "Win7: final rect=(%ld,%ld)-(%ld,%ld) vis=%d pvis=%d",
-              fr.left, fr.top, fr.right, fr.bottom,
-              IsWindowVisible(source), IsWindowVisible(workerW));
-    ws::log(buf);
-    return true;
-}
+		// Final diagnostic
+		RECT fr{}; GetWindowRect(source, &fr);
+		char buf[256];
+		wsprintfA(buf, "Win7: final rect=(%ld,%ld)-(%ld,%ld) vis=%d pvis=%d",
+				  fr.left, fr.top, fr.right, fr.bottom,
+				  IsWindowVisible(source), IsWindowVisible(workerW));
+		ws::log(buf);
+		return true;
+	}
 	
 	bool Window::setBehindIconsWin8to10(HWND source)
 	{
@@ -5624,14 +5619,14 @@ bool Window::setBehindIconsWin7(HWND source)
 			return false;
 		}
 
-		SetWindowLongA(source, GWL_STYLE, 0);
-		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+		SetWindowLongPtr(source, GWL_STYLE, 0);
+		SetWindowLongPtr(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
 
 		SetParent(source, workerW);
 
-		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		DWORD exStyle = GetWindowLongPtr(source, GWL_EXSTYLE);
 		exStyle |= WS_EX_LAYERED;
-		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetWindowLongPtr(source, GWL_EXSTYLE, exStyle);
 		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
 
 		ShowWindow(source, SW_SHOW);
@@ -5693,14 +5688,14 @@ bool Window::setBehindIconsWin7(HWND source)
 		}
 
 		// Convert our top-level window into a child.
-		SetWindowLongA(source, GWL_STYLE, 0);
-		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+		SetWindowLongPtr(source, GWL_STYLE, 0);
+		SetWindowLongPtr(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
 
 		SetParent(source, workerW);
 
-		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		DWORD exStyle = GetWindowLongPtr(source, GWL_EXSTYLE);
 		exStyle |= WS_EX_LAYERED;
-		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetWindowLongPtr(source, GWL_EXSTYLE, exStyle);
 		SetLayeredWindowAttributes(source, 0, 255, LWA_ALPHA);
 
 		ShowWindow(source, SW_SHOW);
@@ -5811,22 +5806,6 @@ bool Window::setBehindIconsWin7(HWND source)
 		return true;
 	}
 
-	//Sets the window icon to a given .ico file.
-	bool Window::setIcon(std::string file, DWORD size) {
-
-		HICON m_hIcon = (HICON)LoadImageA(
-			NULL,
-			file.c_str(),
-			IMAGE_ICON,
-			0, 0,
-			LR_LOADFROMFILE | LR_DEFAULTSIZE
-		);
-		bool res = setIcon(m_hIcon, size);
-		DestroyIcon(m_hIcon);
-		m_hIcon = nullptr;
-		return res;
-	}
-
 	HICON Window::getIcon() {
 		return hIcon;
 	}
@@ -5900,7 +5879,9 @@ bool Window::setBehindIconsWin7(HWND source)
 		case WM_DESTROY:
 			WindowManager::removeWindow(hwnd);
 			isRunning = false;
-			if (WindowManager::windows.empty())
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+			hwnd = nullptr;
+			if(WindowManager::windows.empty())
 				PostQuitMessage(0);
 			return 0;
 
@@ -6146,15 +6127,15 @@ bool Window::setBehindIconsWin7(HWND source)
 	}
 
 	HMONITOR            Monitor::getHandle()     const { return m_handle; }
-	const std::wstring& Monitor::getDeviceName() const { return m_deviceName; }
+	const std::string Monitor::getDeviceName() const { return ws::toUTF8(m_deviceName); }
 	bool                Monitor::isValid()       const { return m_valid; }
 	bool                Monitor::isPrimary()     const { return m_primary; }
 
 		
-	IntRect Monitor::getBounds(bool dpi) const 
+	IntRect Monitor::getBounds(bool logical) const 
 	{ 
 		ws::IntRect rect = m_bounds;
-		if(dpi)
+		if(logical)
 		{
 			float d = getDpi().x;
 			rect.left *= d;
@@ -6164,10 +6145,10 @@ bool Window::setBehindIconsWin7(HWND source)
 		}
 		return rect;
 	}
-	IntRect Monitor::getWorkArea(bool dpi) const 
+	IntRect Monitor::getWorkArea(bool logical) const 
 	{
 		ws::IntRect rect = m_workArea;
-		if(dpi)
+		if(logical)
 		{
 			float d = getDpi().x;
 			rect.left *= d;
@@ -6178,8 +6159,8 @@ bool Window::setBehindIconsWin7(HWND source)
 		return rect;			
 	}
 
-	Vec2i   Monitor::getPosition(bool dpi)      const { return dpi ? ws::Vec2i( m_bounds.left * getDpi().x, m_bounds.top * getDpi().x) : ws::Vec2i( m_bounds.left, m_bounds.top ); }
-	Vec2i   Monitor::getResolution(bool dpi)    const { return dpi ? ws::Vec2i( m_bounds.width * getDpi().x, m_bounds.height * getDpi().x ) : ws::Vec2i( m_bounds.width, m_bounds.height); }
+	Vec2i   Monitor::getPosition(bool logical)      const { return logical ? ws::Vec2i( m_bounds.left * getDpi().x, m_bounds.top * getDpi().x) : ws::Vec2i( m_bounds.left, m_bounds.top ); }
+	Vec2i   Monitor::getResolution(bool logical)    const { return logical ? ws::Vec2i( m_bounds.width * getDpi().x, m_bounds.height * getDpi().x ) : ws::Vec2i( m_bounds.width, m_bounds.height); }
 	
 	ws::Vec2f  Monitor::getDpi()     const { return ws::Vec2f(m_dpiX / 96.0f,m_dpiY / 96.0f); }
 	bool Monitor::operator==(const Monitor& other) const
