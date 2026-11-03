@@ -327,7 +327,7 @@
 * Removed Depreciated getMouseButton and getKey. Use getButton for both mouse and keyboard.
 * Fixed ws::View::toWorld again since I accidentally broke it in this beta version.(nothing major - just coordinate offset)
 * Fixed ws::Font::loadFromSystem(). It now updates to system fonts properly.
-* Dynamically loaded RevokeDragDrop() function in ws::Window so that compiling no longer requires -lole32.
+* Dynamically loaded RevokeDragDrop() function in ws::Window so that compiling no longer requires -lole32. (my mistake. -lole32 is always required for GDI+)
 * Removed ws::Balloon() overload that loaded the icon from file. Using ws::Icon is the safer memory managed alternative.
 * Modified ws::Balloon to remove it's own tray icon after the delay.
 * Added ws::TrayIcon 
@@ -344,15 +344,26 @@
 * Added SWP_NOACTIVATE to the setLayerAfter() method in ws::Window to avoid automatic activation.
 * Added setBehindIcons() to set window behind desktop icons. (only works on windows 11 for now)
 
-
+# V1.8
+* Winsimple Implementation is separated from the declaration. Define the following to use each header type.
+* WINSIMPLE_IMPL
+* WINSIMPLE_AUDIO_IMPL
+* WINSIMPLE_CONTROLS_IMPL
+* WINSIMPLE_ANIMATION_IMPL
+* WINSIMPLE_CLIPBOARD_IMPL
+* Added ws::Video with header winsimple-video.hpp. Use WINSIMPLE_VIDEO_IMPL
+* Added int ws::Video::getVolume() and ws::Video::setVolume(int level) - percentage based.
+* Changed ws::Screen to use Monitor objects so that multiple monitors are supported.
+* Added ws::Vec3::normalize(),ws::Vec3::normalized(), and ws::Vec3::getDistance()
+* Changed ws::Rect::contains to work with any x,y object. And removed redundant duplicate.
+* Removed ws::Window::setIcon(std::string file), you can setIcon using an HICON or ws::Icon.
+* Fixed garbage overflow chars in ws::Text::draw and ws::Text::getLocalBounds. utf16 string size now used instead of utf8 string size. 
 
 
 # New major features to be added. 
 
 
 * More Winapi Controls
-
-* Video class
 
 * Texture stretching into polygonal shapes.
 

@@ -4778,12 +4778,12 @@ namespace ws
 
 			windows[hwnd] = pWindow;
 
-			SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pWindow));
+			SetWindowLongPtrPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pWindow));
 
 			return DefWindowProc(hwnd, msg, wParam, lParam);
 		}
 
-		ws::Window* pWindow = reinterpret_cast<ws::Window*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+		ws::Window* pWindow = reinterpret_cast<ws::Window*>(GetWindowLongPtrPtr(hwnd, GWLP_USERDATA));
 
 		if (pWindow) {
 			return pWindow->handleMessage(msg, wParam, lParam);
@@ -5089,7 +5089,7 @@ namespace ws
 		DWORD s = getStyle();
 		s |= style;
 
-		SetWindowLongA(hwnd, GWL_STYLE, s);
+		SetWindowLongPtr(hwnd, GWL_STYLE, s);
 	}
 
 	// Removes a window style.
@@ -5101,7 +5101,7 @@ namespace ws
 		s &= ~style;
 
 
-		SetWindowLongA(hwnd, GWL_STYLE, s);
+		SetWindowLongPtr(hwnd, GWL_STYLE, s);
 	}
 
 	// Sets all window styles at once.
@@ -5109,9 +5109,9 @@ namespace ws
 		if (!hwnd)
 			return;
 
-		SetWindowLongA(hwnd, GWL_STYLE, 0);
+		SetWindowLongPtr(hwnd, GWL_STYLE, 0);
 
-		SetWindowLongA(hwnd, GWL_STYLE, style);
+		SetWindowLongPtr(hwnd, GWL_STYLE, style);
 	}
 
 	// Adds an extended style.
@@ -5123,7 +5123,7 @@ namespace ws
 		s |= style;
 
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, s);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, s);
 	}
 
 	// Removes an extended style.
@@ -5135,7 +5135,7 @@ namespace ws
 		s &= ~style;
 
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, s);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, s);
 	}
 
 	// Sets all extended styles.
@@ -5143,19 +5143,19 @@ namespace ws
 		if (!hwnd)
 			return;
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, 0);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, 0);
 
-		SetWindowLongA(hwnd, GWL_EXSTYLE, style);
+		SetWindowLongPtr(hwnd, GWL_EXSTYLE, style);
 	}
 
 	//returns the extended window styles for this window
 	DWORD Window::getExStyle() const {
-		return GetWindowLong(hwnd, GWL_EXSTYLE);
+		return GetWindowLongPtr(hwnd, GWL_EXSTYLE);
 	}
 
 	//returns the non-extended window styles for this window.
 	DWORD Window::getStyle() const {
-		return GetWindowLong(hwnd, GWL_STYLE);
+		return GetWindowLongPtr(hwnd, GWL_STYLE);
 
 	}
 
@@ -5390,7 +5390,7 @@ namespace ws
 #define WS_EX_NOREDIRECTIONBITMAP 0x00200000L
 #endif
 
-		bool raised = (GetWindowLongPtr(progman, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0;
+		bool raised = (GetWindowLongPtrPtr(progman, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0;
 		if (!raised) {
 			ws::log("Can't set window behind icons on this computer due to imcompatible desktop design.");
 			return false;
@@ -5398,15 +5398,15 @@ namespace ws
 
 
 		//SetAllStyle
-		SetWindowLongA(source, GWL_STYLE, 0);
-		SetWindowLongA(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
+		SetWindowLongPtr(source, GWL_STYLE, 0);
+		SetWindowLongPtr(source, GWL_STYLE, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN);
 
 		SetParent(source, workerW);
 
 		//add WS_EX_LAYERED
-		DWORD exStyle = GetWindowLong(source, GWL_EXSTYLE);
+		DWORD exStyle = GetWindowLongPtr(source, GWL_EXSTYLE);
 		exStyle |= WS_EX_LAYERED;
-		SetWindowLongA(source, GWL_EXSTYLE, exStyle);
+		SetWindowLongPtr(source, GWL_EXSTYLE, exStyle);
 
 
 		//enable alpha only
