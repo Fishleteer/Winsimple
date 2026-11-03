@@ -1699,6 +1699,8 @@ namespace ws
 		
 		std::vector<std::function<LRESULT(MSG msg)>> getMessageHandlers();
 
+		void doAfter(double seconds,std::function<void()> action);
+		
 	private:
 		// Updates the layered window for per‑pixel alpha when enabled.
 		void updateLayeredWindow();
@@ -1819,6 +1821,8 @@ namespace ws
 		// Shuts down GDI+.
 		~GDIPInit();
 	};
+	
+
 	
 	//////////////////////////////////////////////////////////////////////////////
 	//							  DECLERATIONS
@@ -5817,6 +5821,22 @@ namespace ws
 
 	std::vector<std::function<LRESULT(MSG msg)>> Window::getMessageHandlers() {
 		return customHandlers;
+	}
+
+	//waits till the desired delay in seconds before calling the given function.
+	void Window::doAfter(double seconds,std::function<void()> action)
+	{
+		addMessageHandler([timer = ws::Timer(),seconds,action](MSG m) mutable {
+			
+			if(timer.getSeconds() >= seconds)
+			{
+				if(action)
+					action();
+				
+				return 1;
+			}
+			return 0;
+		});
 	}
 
 	// Updates the layered window for per‑pixel alpha when enabled.

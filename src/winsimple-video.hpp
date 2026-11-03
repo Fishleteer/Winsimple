@@ -26,6 +26,12 @@
 DEFINE_GUID(MF_SESSION_CLOCK,
     0x8737b98d, 0x814d, 0x4cdd,
     0xa7, 0x8c, 0x7e, 0x2c, 0x6f, 0x4a, 0x8f, 0x9c);
+
+// {bac0145b-5528-45fd-8ff2-9c5b814d4eee}
+DEFINE_GUID(MF_TOPOLOGY_STATIC_PLAYBACK_OPTIMIZATIONS,
+    0xbac0145b, 0x5528, 0x45fd,
+    0x8f, 0xf2, 0x9c, 0x5b, 0x81, 0x4d, 0x4e, 0xee);
+
 #endif
 
 
@@ -214,8 +220,8 @@ namespace ws
 		{
 			if (SUCCEEDED(pEvent->GetType(&meType)))
 			{
-				PostMessage(m_hwndEvent, WS_VIDEO_EVENT, (WPARAM)pEvent, (LPARAM)meType);
-				pEvent = nullptr;
+				if(PostMessage(m_hwndEvent, WS_VIDEO_EVENT, (WPARAM)pEvent, (LPARAM)meType))
+					pEvent = nullptr;
 			}
 			if (pEvent) pEvent->Release();
 		}
@@ -310,7 +316,8 @@ namespace ws
 
 		if (m_pSource) { m_pSource->Shutdown(); m_pSource->Release(); m_pSource = nullptr; }
 		if (m_pPD)     { m_pPD->Release();      m_pPD     = nullptr; }
-
+		if (m_pVolume) { m_pVolume->Release();   m_pVolume  = nullptr; }
+		
 		status      = "stopped";
 		m_hwndEvent = nullptr;
 	}
@@ -357,6 +364,8 @@ namespace ws
 		IMFTopology* pTopology = nullptr;
 		HRESULT hr = MFCreateTopology(&pTopology);
 		if (FAILED(hr)) return hr;
+
+		pTopology->SetUINT32(MF_TOPOLOGY_STATIC_PLAYBACK_OPTIMIZATIONS, TRUE);
 
 		DWORD cStreams = 0;
 		hr = m_pPD->GetStreamDescriptorCount(&cStreams);
@@ -527,7 +536,11 @@ namespace ws
 			// Session closed – nothing to do.
 			hr = S_OK;
 			break;
-
+		case MESessionPaused:
+			status = "paused";
+			hr = S_OK;
+			break;
+			
 		default:
 			hr = S_OK;
 			break;
@@ -549,8 +562,12 @@ namespace ws
 
 	HRESULT Video::OnPresentationEnded(IMFMediaEvent* pEvent)
 	{
+		if(m_loop && m_pSession)
+		{
+			m_pSession->Stop(); //explicitely stop before starting or it might get stuck.
+			setProgress(0.0);
+		}
 		status = "stopped";
-		if(m_loop) m_restartPending = true;
 		return S_OK;
 	}
 
@@ -582,12 +599,6 @@ namespace ws
 			HandleEvent(pEvent);
 
 			pEvent->Release();   // Release the event we received via PostMessage
-		}
-
-		if (m_restartPending && m_pSession)
-		{
-			m_restartPending = false;
-			setProgress(0);
 		}
 	}	
 	
@@ -635,7 +646,7 @@ namespace ws
 	
 	bool Video::setProgress(double seconds)
 	{
-		if (!m_pSession || seconds < 0.0) return false;
+		if(!m_pSession || seconds < 0.0) return false;
 
 		PROPVARIANT var;
 		PropVariantInit(&var);
@@ -645,8 +656,11 @@ namespace ws
 		HRESULT hr = m_pSession->Start(&GUID_NULL, &var);
 		PropVariantClear(&var);
 
-		if(SUCCEEDED(hr)) 
-			status = "playing";
+		if(SUCCEEDED(hr))
+		{			
+			if(status == "paused")
+				m_pSession->Pause(); 
+		}
 		return SUCCEEDED(hr);
 	}
 	void Video::close()
