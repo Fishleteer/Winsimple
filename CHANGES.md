@@ -358,6 +358,8 @@
 * Changed ws::Rect::contains to work with any x,y object. And removed redundant duplicate.
 * Removed ws::Window::setIcon(std::string file), you can setIcon using an HICON or ws::Icon.
 * Fixed garbage overflow chars in ws::Text::draw and ws::Text::getLocalBounds. utf16 string size now used instead of utf8 string size. 
+* Fixed ws::Video looping so that it continues to loop.
+
 
 
 # New major features to be added. 

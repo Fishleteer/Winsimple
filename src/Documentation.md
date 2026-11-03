@@ -16,7 +16,7 @@ Major V1.7 changes:
 * Core Linking: gdi32 user32 gdiplus 
 * Animation Linking: None
 * Audio linking: winmm
-* Controls linking: comctl32 uuid cmdlg32 shell32
+* Controls linking: comctl32 uuid comdlg32 shell32
 * Clipboard linking: ole32 uuid
 
 
