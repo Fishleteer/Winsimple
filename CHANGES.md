@@ -359,7 +359,10 @@
 * Removed ws::Window::setIcon(std::string file), you can setIcon using an HICON or ws::Icon.
 * Fixed garbage overflow chars in ws::Text::draw and ws::Text::getLocalBounds. utf16 string size now used instead of utf8 string size. 
 * Fixed ws::Video looping so that it continues to loop.
-
+* Added move operators to ws::Font and ws::Video
+* Added ws::Window::removeCustomHanlder(std::size_t ID)
+* Moved event collection from isOpen() to handleEvent() aka DefWindowProc
+ 
 
 
 # New major features to be added. 

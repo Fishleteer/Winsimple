@@ -922,6 +922,10 @@ namespace ws
 		Font();
 		
 		~Font();
+
+		//moveable
+		Font(Font&& other) noexcept;
+		Font& operator=(Font&& other) noexcept;		
 		
 		Gdiplus::Font* getFontHandle() const;
 		
@@ -1695,10 +1699,10 @@ namespace ws
 		HICON getIcon();
 		
 		// Adds a custom message handler.
-		void addMessageHandler(std::function<LRESULT(MSG msg)> handler);
+		std::size_t addMessageHandler(std::function<LRESULT(MSG msg)> handler);
 		
-		std::vector<std::function<LRESULT(MSG msg)>> getMessageHandlers();
-
+		void removeCustomHandler(std::size_t ID);
+		
 		void doAfter(double seconds,std::function<void()> action);
 		
 	private:
@@ -1718,8 +1722,10 @@ namespace ws
 
 		bool m_perPixelAlpha = false;
 
-		std::vector<std::function<LRESULT(MSG msg)>> customHandlers;
-
+		std::unordered_map<std::size_t,std::function<LRESULT(MSG msg)>> customHandlers;
+		std::vector<std::size_t> removeCustomHandlerQ;
+		std::size_t customHandlerID = 0;
+		
 		bool isRunning = false;
 
 		std::queue<MSG> msgQ;
@@ -3119,6 +3125,46 @@ namespace ws
 		delete gdiFont;      gdiFont = nullptr;
 		delete family;       family = nullptr;
 		delete fontCollection; fontCollection = nullptr;
+	}
+
+	Font::Font(Font&& other) noexcept
+		: fontName(std::move(other.fontName))
+		, fontCollection(other.fontCollection)
+		, gdiFont(other.gdiFont)
+		, family(other.family)
+		, foundFamily(other.foundFamily)
+		, isCustomFont(other.isCustomFont)
+		, fontFilePath(std::move(other.fontFilePath))
+	{
+		other.fontCollection = nullptr;
+		other.gdiFont = nullptr;
+		other.family = nullptr;
+		other.foundFamily = 0;
+		other.isCustomFont = false;
+	}
+
+	Font& Font::operator=(Font&& other) noexcept
+	{
+		if (this != &other) {
+			delete gdiFont;        gdiFont = nullptr;
+			delete family;         family = nullptr;
+			delete fontCollection; fontCollection = nullptr;
+
+			fontName        = std::move(other.fontName);
+			fontCollection  = other.fontCollection;
+			gdiFont         = other.gdiFont;
+			family          = other.family;
+			foundFamily     = other.foundFamily;
+			isCustomFont    = other.isCustomFont;
+			fontFilePath    = std::move(other.fontFilePath);
+
+			other.fontCollection = nullptr;
+			other.gdiFont = nullptr;
+			other.family = nullptr;
+			other.foundFamily = 0;
+			other.isCustomFont = false;
+		}
+		return *this;
 	}
 
 	Gdiplus::Font* Font::getFontHandle() const {
@@ -5024,17 +5070,11 @@ namespace ws
 
 			bool isOurs = (msg.hwnd == hwnd || IsChild(hwnd, msg.hwnd));
 
-			if(isOurs)
-				msgQ.push(msg);
+			if(isOurs && IsDialogMessage(hwnd, &msg))//dialog consumed it. don't dispatch. 
+				continue; 
 			
-			if(msgQ.size() > 4096)//exceeded 200kb. Pop the oldest message.
-				msgQ.pop();
-				
-			if(!isOurs || !IsDialogMessage(hwnd, &msg)) 
-			{
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-			}
+			TranslateMessage(&msg);
+			DispatchMessage(&msg); 
 		}
 
 		return isRunning && hwnd;
@@ -5815,24 +5855,28 @@ namespace ws
 	}
 
 	// Adds a custom message handler.
-	void Window::addMessageHandler(std::function<LRESULT(MSG msg)> handler) {
-		customHandlers.push_back(std::move(handler));
+	std::size_t Window::addMessageHandler(std::function<LRESULT(MSG msg)> handler) {
+		customHandlers[++customHandlerID] = std::move(handler);
+		return customHandlerID;
 	}
 
-	std::vector<std::function<LRESULT(MSG msg)>> Window::getMessageHandlers() {
-		return customHandlers;
+	//removes a custom message handler based on the given ID.
+	void Window::removeCustomHandler(std::size_t handID)
+	{
+		removeCustomHandlerQ.push_back(handID);
 	}
 
 	//waits till the desired delay in seconds before calling the given function.
 	void Window::doAfter(double seconds,std::function<void()> action)
 	{
-		addMessageHandler([timer = ws::Timer(),seconds,action](MSG m) mutable {
+		std::size_t id = 0;
+		id = addMessageHandler([this,id,timer = ws::Timer(),seconds,action](MSG m) mutable {
 			
 			if(timer.getSeconds() >= seconds)
 			{
 				if(action)
 					action();
-				
+				removeCustomHandler(id);
 				return 1;
 			}
 			return 0;
@@ -5873,21 +5917,47 @@ namespace ws
 		ptr(targetHwnd);
 		FreeLibrary(hOle32);
 	}
-
+	
+	
 
 	// Handles messages; called by the global window procedure.
 	LRESULT Window::handleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
-		for (auto& handler : customHandlers) {
-			MSG msg{};
-			msg.hwnd    = hwnd;
-			msg.message = uMsg;
-			msg.lParam  = lParam;
-			msg.wParam  = wParam;
-
-			LRESULT lresult = handler(msg);
+		
+		//converted to MSG struct.
+		MSG msg{};
+		msg.hwnd = hwnd;
+		msg.message = uMsg;
+		msg.wParam = wParam;
+		msg.lParam = lParam;
+		msg.time = GetMessageTime();
+		DWORD pos = GetMessagePos();
+		POINTS pts = MAKEPOINTS(pos);
+		msg.pt.x = pts.x;
+		msg.pt.y = pts.y; 
+		
+		//skip adding messages to the poll if they aren't meaningful to the user. 
+		if(uMsg != WM_PAINT && uMsg != WM_ERASEBKGND && uMsg != WM_NCHITTEST) 
+		{
+			msgQ.push(msg);
+			if(msgQ.size() > 4096) msgQ.pop();			
+		}
+		
+		//still useful for things that must be handled immediately.
+		for (auto& handler : customHandlers) 
+		{
+			LRESULT lresult = handler.second(msg);
 			if (lresult != 0)
 				return lresult;//if result is not zero that means that the message was handled.
 		}
+		
+		//remove dead handlers.
+		for(auto& r : removeCustomHandlerQ)
+		{
+			if(customHandlers.count(r) > 0)
+				customHandlers.erase(r);
+		}
+		removeCustomHandlerQ.clear();
+		
 
 		switch (uMsg) {
 
@@ -5918,17 +5988,6 @@ namespace ws
 		{
 			NMHDR* pnmh = reinterpret_cast<NMHDR*>(lParam);
 			return s_handleNotifyForChildren(this, pnmh, uMsg, wParam, lParam);
-		}
-
-		case WM_COMMAND:
-		{
-			MSG msg = {};
-			msg.hwnd = hwnd;
-			msg.message = WM_COMMAND;
-			msg.wParam = wParam;
-			msg.lParam = lParam;
-			msgQ.push(msg);
-			return 0;
 		}
 
 		case WM_SETCURSOR:

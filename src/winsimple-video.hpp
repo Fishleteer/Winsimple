@@ -71,8 +71,12 @@ namespace ws
 		// Non-copyable
 		Video(const Video&) = delete;
 		Video& operator=(const Video&) = delete;
+		//moveable
+		Video(Video&& other) noexcept;
+		Video& operator=(Video&& other) noexcept; 
 
-		bool open(std::string sURL, HWND hwndVideo);
+
+		bool open(std::string sURL, ws::Window &window);
 
 		bool play();
 		bool pause();
@@ -89,16 +93,18 @@ namespace ws
 		int getVolume();
 
 		const UINT WS_VIDEO_EVENT = WM_APP + 1;
-		void update(MSG msg);
 		
 		private:
 
 		std::string status = "stopped";
 		bool m_loop = false;
 		bool m_restartPending = false;
+		bool m_pausePending = false;
 		HRESULT HandleEvent(IMFMediaEvent* pEvent);
 		void Shutdown();
 		HANDLE m_hCloseEvent = nullptr;
+
+		void updateVideoPosition();
 
 		// ----- IUnknown (required by IMFAsyncCallback) -----
 		STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
@@ -130,7 +136,8 @@ namespace ws
 		HRESULT OnTopologyStatus(IMFMediaEvent* pEvent);
 		HRESULT OnPresentationEnded(IMFMediaEvent* pEvent);
 		HRESULT OnSessionStarted(IMFMediaEvent* pEvent);
-
+		HRESULT OnSessionStopped(IMFMediaEvent* pEvent);
+		
 		// COM refcount
 		LONG m_cRef;
 
@@ -139,8 +146,10 @@ namespace ws
 		IMFSimpleAudioVolume*      m_pVolume = nullptr;
 		IMFMediaSource*            m_pSource = nullptr;
 		IMFPresentationDescriptor* m_pPD = nullptr;
-
-		HWND m_hwndEvent;   // Window to receive WS_VIDEO_PLAYER_EVENT
+		IMFVideoDisplayControl*    m_pDisplayControl = nullptr;
+		
+		ws::Window *windowPtr = nullptr; // Window to receive WS_VIDEO_PLAYER_EVENT
+		int handler = -1;
 	};
 	
 	#ifdef WINSIMPLE_VIDEO_IMPL
@@ -161,7 +170,8 @@ namespace ws
 		, m_pSource(nullptr)
 		, m_pPD(nullptr)
 		, status("stopped")
-		, m_hwndEvent(nullptr)
+		, windowPtr(nullptr)
+		, handler(-1)
 	{
 		m_hCloseEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 	}
@@ -170,6 +180,56 @@ namespace ws
 	{
 		Shutdown();
 		if (m_hCloseEvent) { CloseHandle(m_hCloseEvent); m_hCloseEvent = nullptr; }
+	}
+
+	Video::Video(Video&& other) noexcept
+		: status(std::move(other.status))
+		, m_loop(other.m_loop)
+		, m_restartPending(other.m_restartPending)
+		, m_pausePending(other.m_pausePending)
+		, m_hCloseEvent(other.m_hCloseEvent)
+		, m_cRef(1)
+		, m_pSession(other.m_pSession)
+		, m_pVolume(other.m_pVolume)
+		, m_pSource(other.m_pSource)
+		, m_pPD(other.m_pPD)
+		, windowPtr(other.windowPtr)
+		, handler(other.handler)
+	{
+		other.m_hCloseEvent = nullptr;
+		other.m_pSession = nullptr;
+		other.m_pVolume  = nullptr;
+		other.m_pSource  = nullptr;
+		other.m_pPD      = nullptr;
+		other.windowPtr = nullptr;
+	}
+
+	Video& Video::operator=(Video&& other) noexcept
+	{
+		if (this != &other) {
+			Shutdown();
+			if (m_hCloseEvent) { CloseHandle(m_hCloseEvent); m_hCloseEvent = nullptr; }
+
+			status            = std::move(other.status);
+			m_loop            = other.m_loop;
+			m_restartPending  = other.m_restartPending;
+			m_pausePending	  = other.m_pausePending;
+			m_hCloseEvent     = other.m_hCloseEvent;
+			m_pSession        = other.m_pSession;
+			m_pVolume         = other.m_pVolume;
+			m_pSource         = other.m_pSource;
+			m_pPD             = other.m_pPD;
+			windowPtr       = other.windowPtr;
+			handler = other.handler;
+			
+			other.m_hCloseEvent = nullptr;
+			other.m_pSession = nullptr;
+			other.m_pVolume  = nullptr;
+			other.m_pSource  = nullptr;
+			other.m_pPD      = nullptr;
+			other.windowPtr = nullptr;
+		}
+		return *this;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -220,7 +280,7 @@ namespace ws
 		{
 			if (SUCCEEDED(pEvent->GetType(&meType)))
 			{
-				if(PostMessage(m_hwndEvent, WS_VIDEO_EVENT, (WPARAM)pEvent, (LPARAM)meType))
+				if(PostMessage(windowPtr->hwnd, WS_VIDEO_EVENT, (WPARAM)pEvent, (LPARAM)meType))
 					pEvent = nullptr;
 			}
 			if (pEvent) pEvent->Release();
@@ -235,16 +295,16 @@ namespace ws
 	}
 
 
-	bool Video::open(std::string sURL, HWND hwndVideo)
+	bool Video::open(std::string sURL, ws::Window &window)
 	{
-		if (sURL.empty() || !hwndVideo)
+		if (sURL.empty() || !window.hwnd)
 			return false;
 
 		// Already open?
 		if (m_pSession || m_pSource)
 			Shutdown(); //close the old
 
-		m_hwndEvent = hwndVideo;   // we post events to the video window
+		windowPtr = &window;   // we post events to the video window
 
 		HRESULT hr = CreateSession();
 		if (FAILED(hr)) goto done;
@@ -252,7 +312,7 @@ namespace ws
 		hr = CreateMediaSource(ws::toUTF16(sURL).c_str());
 		if (FAILED(hr)) goto done;
 
-		hr = CreateTopology(hwndVideo);
+		hr = CreateTopology(window.hwnd);
 
 	done:
 		if (FAILED(hr))
@@ -260,6 +320,24 @@ namespace ws
 			Shutdown();
 			return false;
 		}
+		
+		if(handler == -1)
+		{
+			handler = window.addMessageHandler([this](MSG msg){
+				
+				if (msg.message != WS_VIDEO_EVENT) return 0;
+				
+				IMFMediaEvent* pEvent = reinterpret_cast<IMFMediaEvent*>(msg.wParam);
+				if (!pEvent) return 0;
+
+				if (windowPtr && m_pSession)
+					HandleEvent(pEvent);
+
+				pEvent->Release();  				
+				return 1;
+			});
+		}
+		
 		return true;
 	}
 
@@ -305,6 +383,9 @@ namespace ws
 
 	void Video::Shutdown()
 	{
+		if(m_pDisplayControl) { m_pDisplayControl->Release(); m_pDisplayControl = nullptr; }
+		
+		
 		if (m_pSession)
 		{
 			ResetEvent(m_hCloseEvent);
@@ -313,13 +394,18 @@ namespace ws
 			m_pSession->Release();
 			m_pSession = nullptr;
 		}
-
+		m_pausePending = false;
+		
 		if (m_pSource) { m_pSource->Shutdown(); m_pSource->Release(); m_pSource = nullptr; }
 		if (m_pPD)     { m_pPD->Release();      m_pPD     = nullptr; }
 		if (m_pVolume) { m_pVolume->Release();   m_pVolume  = nullptr; }
 		
 		status      = "stopped";
-		m_hwndEvent = nullptr;
+		if(handler != -1)
+			windowPtr->removeCustomHandler(handler);
+		windowPtr = nullptr;
+		handler = -1;
+		
 	}
 
 	// ---------------------------------------------------------------------------
@@ -540,7 +626,9 @@ namespace ws
 			status = "paused";
 			hr = S_OK;
 			break;
-			
+		case MESessionStopped:
+			hr = OnSessionStopped(pEvent);
+			break;
 		default:
 			hr = S_OK;
 			break;
@@ -557,17 +645,40 @@ namespace ws
 			return hr;
 		//this means the topology is ready and autoplay could be done here. I'm just going to make it an explicite play() command.
 		//return default ok.
+		
+		if(topstatus == MF_TOPOSTATUS_READY)
+		{
+			if(!m_pDisplayControl)
+			{
+				hr = MFGetService(
+				m_pSession,
+				MR_VIDEO_RENDER_SERVICE,
+				IID_PPV_ARGS(&m_pDisplayControl));
+				
+				if(SUCCEEDED(hr) && m_pDisplayControl)
+				{
+					m_pDisplayControl->SetRenderingPrefs(MFVideoRenderPrefs_DoNotRepaintOnStop);
+					m_pDisplayControl->SetAspectRatioMode(MFVideoARMode_PreservePicture);
+					
+					if(windowPtr)
+						updateVideoPosition();
+				}
+			}
+		}
+		
+		
 		return S_OK;
 	}
 
 	HRESULT Video::OnPresentationEnded(IMFMediaEvent* pEvent)
 	{
-		if(m_loop && m_pSession)
+		if(m_loop) 
 		{
-			m_pSession->Stop(); //explicitely stop before starting or it might get stuck.
-			setProgress(0.0);
-		}
-		status = "stopped";
+			m_restartPending = true;
+			m_pSession->Stop(); 
+		} 
+		else
+			status = "stopped";
 		return S_OK;
 	}
 
@@ -580,27 +691,65 @@ namespace ws
 
 		if (FAILED(hrStatus))
 		{
-			// Start failed.
+			m_pausePending = false;
 			status = "stopped";
 			return hrStatus;
 		}
 
-		status = "playing";
+		if(m_pausePending)
+			m_pausePending = false;
+		else
+			status = "playing";
 		return S_OK;
 	}
 	
-	void Video::update(MSG msg)
+	HRESULT Video::OnSessionStopped(IMFMediaEvent* pEvent)
 	{
-		if(msg.message == WS_VIDEO_EVENT)
+		if(m_restartPending) 
 		{
-			IMFMediaEvent* pEvent = (IMFMediaEvent*)msg.wParam;
-			MediaEventType meType = (MediaEventType)msg.lParam;
+			m_restartPending = false;
+			
+			PROPVARIANT varStart;
+			PropVariantInit(&varStart);
+			varStart.vt = VT_I8;
+			varStart.hVal.QuadPart = 0;
 
-			HandleEvent(pEvent);
+			HRESULT hr = m_pSession->Start(&GUID_NULL, &varStart);
+			PropVariantClear(&varStart);
+			
+			if (FAILED(hr)) {
+				status = "stopped"; // Loop failed, update status
+			}
+			// if start succeeds, status will be updated by OnSessionStarted
+		} 
+		else
+			status = "stopped";
+		return S_OK;
+	}
+	
+	void Video::updateVideoPosition()
+	{
+		if(!m_pDisplayControl)
+		{
+			HRESULT hr = MFGetService(
+				m_pSession,
+				MR_VIDEO_RENDER_SERVICE,
+				IID_PPV_ARGS(&m_pDisplayControl));
+			if (FAILED(hr) || !m_pDisplayControl)
+				return;
 
-			pEvent->Release();   // Release the event we received via PostMessage
-		}
-	}	
+			// preserve aspect ratio (letterbox). Use MFVideoARMode_None to stretch.
+			m_pDisplayControl->SetAspectRatioMode(MFVideoARMode_PreservePicture);
+		}			
+		
+		RECT rcClient = {};
+		GetClientRect(windowPtr->hwnd, &rcClient);
+
+		MFVideoNormalizedRect src = { 0.0f, 0.0f, 1.0f, 1.0f };   // whole frame
+		HRESULT hr = m_pDisplayControl->SetVideoPosition(&src, &rcClient);
+		return;	
+	}
+	
 	
 	double Video::getProgress()
 	{
@@ -648,6 +797,8 @@ namespace ws
 	{
 		if(!m_pSession || seconds < 0.0) return false;
 
+		m_pausePending = (status == "paused");
+
 		PROPVARIANT var;
 		PropVariantInit(&var);
 		var.vt = VT_I8;
@@ -656,12 +807,15 @@ namespace ws
 		HRESULT hr = m_pSession->Start(&GUID_NULL, &var);
 		PropVariantClear(&var);
 
-		if(SUCCEEDED(hr))
-		{			
-			if(status == "paused")
-				m_pSession->Pause(); 
+		if(FAILED(hr))
+			return false;
+
+		if (m_pausePending)
+		{
+			hr = m_pSession->Pause();
+			if (FAILED(hr)) { m_pausePending = false; return false; }
 		}
-		return SUCCEEDED(hr);
+		return true;
 	}
 	void Video::close()
 	{
