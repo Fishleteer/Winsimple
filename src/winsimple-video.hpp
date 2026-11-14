@@ -79,30 +79,41 @@ namespace ws
 		bool open(std::string sURL, ws::Window &window);
 
 		bool play();
-		bool pause();
 		bool stop();
-		std::string getStatus()
-		{return status;}
-		double getProgress();
-		bool setProgress(double seconds);
-		double getLength();
-		bool isFinished();
-		void setLoop(bool loops = true);		
+		bool pause();
 		void close();
-		bool setVolume(int level);
 		int getVolume();
-
+		bool isFinished();
+		bool keepsRatio();
+		double getLength();
+		ws::Vec2i getSize();
+		double getProgress();
+		std::string getStatus();
+		ws::Vec2i getPosition();
+		bool setVolume(int level);
+		ws::Vec2i getDefaultSize();
+		bool setSize(ws::Vec2i size,bool keepRatio = true);
+		void setLoop(bool loops = true);
+		bool setPosition(ws::Vec2i pos);
+		bool setProgress(double seconds);
+		
+		
+		
 		const UINT WS_VIDEO_EVENT = WM_APP + 1;
 		
 		private:
 
-		std::string status = "stopped";
-		bool m_loop = false;
-		bool m_restartPending = false;
-		bool m_pausePending = false;
-		HRESULT HandleEvent(IMFMediaEvent* pEvent);
 		void Shutdown();
+		bool m_loop = false;
+		bool keepRatio = true;
+		bool customRect = false;
+		bool m_pausePending = false;
+		bool m_restartPending = false;
+		std::string status = "stopped";
 		HANDLE m_hCloseEvent = nullptr;
+		ws::IntRect destRect = {0,0,0,0};
+		HRESULT HandleEvent(IMFMediaEvent* pEvent);
+		
 
 		void updateVideoPosition();
 
@@ -658,7 +669,7 @@ namespace ws
 				if(SUCCEEDED(hr) && m_pDisplayControl)
 				{
 					m_pDisplayControl->SetRenderingPrefs(MFVideoRenderPrefs_DoNotRepaintOnStop);
-					m_pDisplayControl->SetAspectRatioMode(MFVideoARMode_PreservePicture);
+					m_pDisplayControl->SetAspectRatioMode(MFVideoARMode_None);
 					
 					if(windowPtr)
 						updateVideoPosition();
@@ -737,16 +748,17 @@ namespace ws
 				IID_PPV_ARGS(&m_pDisplayControl));
 			if (FAILED(hr) || !m_pDisplayControl)
 				return;
-
-			// preserve aspect ratio (letterbox). Use MFVideoARMode_None to stretch.
-			m_pDisplayControl->SetAspectRatioMode(MFVideoARMode_PreservePicture);
+			
+			auto mode = MFVideoARMode_None;
+			if(keepRatio)
+				mode = MFVideoARMode_PreservePicture;
+			m_pDisplayControl->SetAspectRatioMode(mode);
 		}			
 		
-		RECT rcClient = {};
-		GetClientRect(windowPtr->hwnd, &rcClient);
-
+		ws::IntRect rect = {destRect.left - (destRect.width/2),destRect.top - (destRect.height/2),destRect.width,destRect.height};
+		RECT r = rect;
 		MFVideoNormalizedRect src = { 0.0f, 0.0f, 1.0f, 1.0f };   // whole frame
-		HRESULT hr = m_pDisplayControl->SetVideoPosition(&src, &rcClient);
+		HRESULT hr = m_pDisplayControl->SetVideoPosition(&src, &r);
 		return;	
 	}
 	
@@ -859,6 +871,113 @@ namespace ws
 		HRESULT hr = m_pVolume->GetMasterVolume(&level);
 		return SUCCEEDED(hr) ? level * 100 : -1.0f;
 	}	
+	
+	bool Video::setSize(ws::Vec2i size,bool keepRatio)
+	{
+		if(size.x <= 0 || size.y <= 0)
+			return false;
+		
+		destRect.width = size.x;
+		destRect.height = size.y;
+		customRect = true;
+		
+		this->keepRatio = keepRatio;
+		
+		if(m_pDisplayControl)
+			updateVideoPosition();
+		return true;
+	}
+	ws::Vec2i Video::getSize()
+	{
+		return ws::Vec2i(destRect.width,destRect.height); 
+	}
+	bool Video::setPosition(ws::Vec2i pos)
+	{
+		destRect.left = pos.x;
+		destRect.top = pos.y;
+		if(m_pDisplayControl)
+			updateVideoPosition();
+		return true;
+	}
+	ws::Vec2i Video::getPosition()
+	{
+		return ws::Vec2i(destRect.left,destRect.top);
+	}
+	ws::Vec2i Video::getDefaultSize()
+	{
+		if(!m_pPD)
+			return {0,0};
+		DWORD streamCount = 0;
+		if(FAILED(m_pPD->GetStreamDescriptorCount(&streamCount)))
+			return {0,0};
+		for(DWORD a = 0; a < streamCount;a++)
+		{
+			BOOL selected = FALSE;
+			IMFStreamDescriptor* pSD = nullptr;
+			if(FAILED(m_pPD->GetStreamDescriptorByIndex(a,&selected,&pSD)))
+				continue;
+			
+			if(!selected)
+			{
+				pSD->Release();
+				continue;
+			}
+			
+			IMFMediaTypeHandler* pHandler = nullptr;
+			if(FAILED(pSD->GetMediaTypeHandler(&pHandler)))
+			{
+				pSD->Release();
+				continue;				
+			}
+
+			IMFMediaType* pType = nullptr;
+			HRESULT hr = pHandler->GetCurrentMediaType(&pType);			
+			
+			if(hr == MF_E_INVALIDMEDIATYPE || FAILED(hr))
+			{
+				DWORD typeCount = 0;
+				if(SUCCEEDED(pHandler->GetMediaTypeCount(&typeCount)) && typeCount > 0)
+					pHandler->GetMediaTypeByIndex(0, &pType);
+			}			
+			
+			if(pType)
+			{
+				GUID majorType = GUID_NULL;
+				pType->GetMajorType(&majorType);
+
+				if(majorType == MFMediaType_Video)
+				{
+					UINT32 width = 0, height = 0;//get the display size.
+					hr = MFGetAttributeSize(pType, MF_MT_MINIMUM_DISPLAY_APERTURE, &width, &height);
+					
+					if(!SUCCEEDED(hr))//fall back to the less accurate size that the codec reports.
+						hr = MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &width, &height);
+
+					pType->Release();
+					pHandler->Release();
+					pSD->Release();
+
+					if(SUCCEEDED(hr))
+						return { static_cast<int>(width), static_cast<int>(height) };
+
+					return {0,0};
+				}
+
+				pType->Release();
+			}
+
+			pHandler->Release();
+			pSD->Release();
+		}
+		return { 0, 0 };
+	}
+	
+	bool Video::keepsRatio()
+	{return keepRatio;}
+	
+	std::string Video::getStatus()
+	{return status;}
+		
 	
 	#endif
 }

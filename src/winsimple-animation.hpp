@@ -1,6 +1,8 @@
 #ifndef WINSIMPLE_ANIMATION
 #define WINSIMPLE_ANIMATION
 
+//Must include winsimple.hpp as base.
+
 namespace ws
 {
 	class GIF

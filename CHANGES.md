@@ -362,7 +362,7 @@
 * Added move operators to ws::Font and ws::Video
 * Added ws::Window::removeCustomHanlder(std::size_t ID)
 * Moved event collection from isOpen() to handleEvent() aka DefWindowProc
- 
+* Added linking helper wsg++.exe 
 
 
 # New major features to be added. 

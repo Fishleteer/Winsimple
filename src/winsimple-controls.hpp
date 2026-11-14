@@ -11,7 +11,7 @@
 
 #include <thread>
 
-//Controls Linking: -lcomctl32 -lcomdlg32
+//Controls Linking: -lcomctl32 -lcomdlg32 -lshell32 -luuid
 
 //automated linking for visual studio MSVC
 #ifdef _MSC_VER

@@ -10,7 +10,7 @@
 #include <queue>
 #include <functional>
 
-//Clipboard And DragNDrop Linking: -lole32 -luuid
+//Clipboard And DragNDrop Linking: -lole32 -luuid -lshell32
 
 //automated linking for visual studio MSVC
 #ifdef _MSC_VER
