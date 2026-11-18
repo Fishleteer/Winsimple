@@ -363,6 +363,7 @@
 * Added ws::Window::removeCustomHanlder(std::size_t ID)
 * Moved event collection from isOpen() to handleEvent() aka DefWindowProc
 * Added linking helper wsg++.exe 
+* Added ws::Socket within winsimple-network.hpp
 
 
 # New major features to be added. 

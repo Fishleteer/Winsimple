@@ -23,6 +23,7 @@
 #define GetAValue(value) (LOBYTE((value)>>24))
 #define RGBA(r, g, b, a) ((COLORREF)(((BYTE)(r)|((WORD)((BYTE)(g))<<8))|(((DWORD)(BYTE)(b))<<16))|((((DWORD)(BYTE)(a))<<24)))
 
+#include <winsock2.h>//required that its here in case networking is ever included after the base.
 #include <windows.h>
 #include <windowsx.h>
 #include <gdiplus.h>
